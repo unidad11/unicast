@@ -5,7 +5,7 @@ import Foundation
 enum PodcastService {
 
     /// Busca podcasts por nombre en la iTunes Search API.
-    static func search(_ term: String) async -> [SearchResult] {
+    static func search(_ term: String, country: String = "US") async -> [SearchResult] {
         let cleaned = term.trimmed
         guard !cleaned.isEmpty,
               var components = URLComponents(string: "https://itunes.apple.com/search")
@@ -13,6 +13,7 @@ enum PodcastService {
         components.queryItems = [
             URLQueryItem(name: "term", value: cleaned),
             URLQueryItem(name: "media", value: "podcast"),
+            URLQueryItem(name: "country", value: country),
             URLQueryItem(name: "limit", value: "25")
         ]
         guard let url = components.url,
@@ -36,32 +37,43 @@ enum PodcastService {
         return RSSParser(feedURL: feedURL, colorHex: colorHex).parse(data: data)
     }
 
-    /// Descubre podcasts parecidos a los que sigue el usuario, por género (directorio de Apple, gratis).
-    static func discover(from podcasts: [Podcast]) async -> [SearchResult] {
-        // Géneros de hasta 5 podcasts seguidos (consultando iTunes por su nombre).
-        var genres: [String] = []
-        for podcast in podcasts.prefix(5) {
-            if let match = await search(podcast.title).first, let genre = match.primaryGenreName {
-                genres.append(genre)
+    /// Detecta las categorías de lo que sigue el usuario y, por cada una, propone podcasts de
+    /// esa categoría que aún no sigue. `country` elige la tienda (ES = español, US = inglés).
+    static func discover(from podcasts: [Podcast], country: String) async -> [GenreSection] {
+        // Categorías de hasta 6 seguidos (con el nombre en el idioma de la tienda consultada).
+        var genreCounts: [String: Int] = [:]
+        for podcast in podcasts.prefix(6) {
+            if let match = await search(podcast.title, country: country).first,
+               let genre = match.primaryGenreName {
+                genreCounts[genre, default: 0] += 1
             }
         }
-        // Los 2 géneros más repetidos entre lo que sigue.
-        let topGenres = Dictionary(grouping: genres, by: { $0 })
-            .sorted { $0.value.count > $1.value.count }
-            .prefix(2).map(\.key)
+        // Hasta 4 categorías, las más repetidas primero.
+        let topGenres = genreCounts.sorted { $0.value > $1.value }.prefix(4).map(\.key)
         guard !topGenres.isEmpty else { return [] }
-        // Podcasts de esos géneros que el usuario aún NO sigue (sin repetir).
+        // Por cada categoría, podcasts de ese estilo que el usuario aún NO sigue (sin repetir).
         let followed = Set(podcasts.map(\.title))
         var seen = Set<Int>()
-        var recommendations: [SearchResult] = []
+        var sections: [GenreSection] = []
         for genre in topGenres {
-            for result in await search(genre)
+            var results: [SearchResult] = []
+            for result in await search(genre, country: country)
             where !followed.contains(result.collectionName) && seen.insert(result.id).inserted {
-                recommendations.append(result)
+                results.append(result)
+            }
+            if !results.isEmpty {
+                sections.append(GenreSection(genre: genre, results: Array(results.prefix(8))))
             }
         }
-        return recommendations
+        return sections
     }
+}
+
+/// Un grupo de recomendaciones de Descubrir, bajo el nombre de su categoría.
+struct GenreSection: Identifiable {
+    let genre: String
+    let results: [SearchResult]
+    var id: String { genre }
 }
 
 /// Respuesta de la iTunes Search API.

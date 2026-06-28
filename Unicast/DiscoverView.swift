@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// Descubrir: podcasts parecidos a los que sigues, por género (directorio de Apple, gratis).
+/// Descubrir: podcasts parecidos a los que sigues, agrupados por categoría y con
+/// secciones en español o en inglés (directorio de Apple, gratis).
 struct DiscoverView: View {
     @Environment(AppStore.self) private var store
     @Environment(DownloadManager.self) private var downloads
-    @State private var results: [SearchResult] = []
+    @State private var sections: [GenreSection] = []
     @State private var isLoading = true
     @State private var followed: Set<Int> = []
+    @State private var language = "ES"   // ES = español, US = inglés
 
     var body: some View {
         ZStack {
@@ -15,18 +17,22 @@ struct DiscoverView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Descubrir")
                     .font(displayFont(size: 26)).foregroundStyle(Theme.textPrimary)
-                Text("Parecidos a los que sigues")
-                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+
+                Picker("Idioma", selection: $language) {
+                    Text("Español").tag("ES")
+                    Text("Inglés").tag("US")
+                }
+                .pickerStyle(.segmented)
 
                 if isLoading {
                     Spacer()
                     ProgressView().tint(Theme.accent).frame(maxWidth: .infinity)
                     Spacer()
-                } else if results.isEmpty {
+                } else if sections.isEmpty {
                     Spacer()
                     VStack(spacing: 10) {
                         Image(systemName: "safari").font(.system(size: 38)).foregroundStyle(Theme.accent)
-                        Text("Sigue algún podcast y aquí te propondré otros del mismo estilo.")
+                        Text("Sigue algún podcast y aquí te propondré otros del mismo estilo, ordenados por categoría.")
                             .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                             .multilineTextAlignment(.center).padding(.horizontal, 30)
                     }
@@ -34,24 +40,33 @@ struct DiscoverView: View {
                     Spacer()
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(results) { result in
-                                resultRow(result)
-                                Divider().overlay(Theme.divider)
+                        LazyVStack(alignment: .leading, spacing: 20) {
+                            ForEach(sections) { section in
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(section.genre)
+                                        .font(displayFont(size: 19))
+                                        .foregroundStyle(Theme.accent)
+                                        .padding(.bottom, 6)
+                                    ForEach(section.results) { result in
+                                        resultRow(result)
+                                        Divider().overlay(Theme.divider)
+                                    }
+                                }
                             }
                         }
+                        .padding(.bottom, 12)
                     }
                 }
             }
             .padding(16)
         }
-        .task { await load() }
+        .task(id: language) { await load() }
         .refreshable { await load() }
     }
 
     private func load() async {
-        if results.isEmpty { isLoading = true }
-        results = await PodcastService.discover(from: store.podcasts)
+        isLoading = true
+        sections = await PodcastService.discover(from: store.podcasts, country: language)
         isLoading = false
     }
 
