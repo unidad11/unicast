@@ -15,8 +15,8 @@ struct PlaylistsView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         HStack {
                             Text("Listas")
-                                .font(.system(size: 24, weight: .bold))
-                                .foregroundStyle(.white)
+                                .font(displayFont(size: 26))
+                                .foregroundStyle(Theme.textPrimary)
                             Spacer()
                             Button { showCreate = true } label: {
                                 Image(systemName: "plus")
@@ -67,23 +67,26 @@ private struct PlaylistRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Theme.surface)
-                .frame(width: 46, height: 46)
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(playlist.isSmart
+                      ? AnyShapeStyle(LinearGradient(colors: [.white, Color(hex: "F1EDFF")], startPoint: .top, endPoint: .bottom))
+                      : AnyShapeStyle(Theme.surface))
+                .frame(width: 54, height: 54)
                 .overlay {
                     Image(systemName: playlist.isSmart ? "bolt.fill" : "music.note.list")
-                        .font(.system(size: 18))
-                        .foregroundStyle(playlist.isSmart ? Theme.accentLight : Theme.textSecondary)
+                        .font(.system(size: 20))
+                        .foregroundStyle(playlist.isSmart ? Theme.accent : Theme.textSecondary)
                 }
+                .shadow(color: .black.opacity(0.06), radius: 6, y: 3)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(playlist.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
                 if playlist.isSmart {
                     Label("Inteligente · \(playlist.episodeIDs.count) episodios", systemImage: "bolt.fill")
                         .font(.system(size: 11))
-                        .foregroundStyle(Theme.accentLight)
+                        .foregroundStyle(Theme.accent)
                 } else {
                     Text("\(playlist.episodeIDs.count) episodios")
                         .font(.system(size: 11))

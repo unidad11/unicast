@@ -18,15 +18,15 @@ struct SearchView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("Buscar")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(displayFont(size: 26))
+                    .foregroundStyle(Theme.textPrimary)
 
                 searchField
 
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         if isLoading {
-                            ProgressView().tint(.white).padding(.vertical, 20)
+                            ProgressView().tint(Theme.accent).padding(.vertical, 20)
                         }
                         ForEach(results) { result in
                             resultRow(result)
@@ -56,7 +56,7 @@ struct SearchView: View {
             Image(systemName: "magnifyingglass").foregroundStyle(Theme.textSecondary)
             TextField("", text: $query,
                       prompt: Text("Por nombre o pega una URL").foregroundStyle(Theme.textSecondary))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
             if !query.isEmpty {
@@ -84,7 +84,7 @@ struct SearchView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.collectionName)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white).lineLimit(1)
+                    .foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(result.artistName)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary).lineLimit(1)
@@ -102,14 +102,14 @@ struct SearchView: View {
         if isFollowing {
             Image(systemName: "checkmark")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color(hex: "5DCAA5"))
+                .foregroundStyle(Color(hex: "159E78"))
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(Color(hex: "1E2A20")))
+                .background(Circle().fill(Color(hex: "E3F5EC")))
         } else {
             Button { follow(result) } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.accentLight)
+                    .foregroundStyle(Theme.accent)
                     .frame(width: 30, height: 30)
                     .background(Circle().stroke(Theme.accent, lineWidth: 1.5))
             }
@@ -120,9 +120,9 @@ struct SearchView: View {
     private var addByURLRow: some View {
         Button { showAdd = true } label: {
             HStack(spacing: 9) {
-                Image(systemName: "link").foregroundStyle(Theme.accentLight)
+                Image(systemName: "link").foregroundStyle(Theme.accent)
                 Text("Añadir por URL o importar OPML")
-                    .font(.system(size: 12)).foregroundStyle(Theme.accentLight)
+                    .font(.system(size: 12)).foregroundStyle(Theme.accent)
                 Spacer()
                 Image(systemName: "chevron.right").foregroundStyle(Theme.textMuted)
             }

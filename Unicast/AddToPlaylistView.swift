@@ -11,7 +11,7 @@ struct AddToPlaylistView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Theme.background(store.backgroundStyle).ignoresSafeArea()
+                Theme.background().ignoresSafeArea()
 
                 List {
                     Section("Tus listas") {
@@ -26,8 +26,8 @@ struct AddToPlaylistView: View {
                             } label: {
                                 HStack(spacing: 10) {
                                     Image(systemName: playlist.isSmart ? "bolt.fill" : "music.note.list")
-                                        .foregroundStyle(playlist.isSmart ? Theme.accentLight : Theme.textSecondary)
-                                    Text(playlist.name).foregroundStyle(.white)
+                                        .foregroundStyle(playlist.isSmart ? Theme.accent : Theme.textSecondary)
+                                    Text(playlist.name).foregroundStyle(Theme.textPrimary)
                                     Spacer()
                                     Text("\(playlist.episodeIDs.count)").foregroundStyle(Theme.textMuted)
                                 }
@@ -40,12 +40,12 @@ struct AddToPlaylistView: View {
                         HStack {
                             TextField("", text: $newName,
                                       prompt: Text("Nombre de la lista").foregroundStyle(Theme.textMuted))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.textPrimary)
                             Button("Crear") {
                                 store.createPlaylist(name: newName, episodeIDs: episodeIDs)
                                 finish()
                             }
-                            .foregroundStyle(Theme.accentLight)
+                            .foregroundStyle(Theme.accent)
                             .disabled(newName.trimmed.isEmpty)
                         }
                     }
@@ -54,6 +54,7 @@ struct AddToPlaylistView: View {
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
                 .tint(Theme.accent)
+                .foregroundStyle(Theme.textPrimary)
             }
             .navigationTitle("Añadir a lista (\(episodeIDs.count))")
             .navigationBarTitleDisplayMode(.inline)

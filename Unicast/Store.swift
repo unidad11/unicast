@@ -148,29 +148,43 @@ final class AppStore {
     /// Sigue un podcast (lo añade a la biblioteca) si no estaba ya.
     func subscribe(_ podcast: Podcast, downloads: DownloadManager) {
         guard !podcasts.contains(where: { $0.title == podcast.title }) else { return }
-        podcasts.append(podcast)
+        var fresh = podcast
+        // Fecha de alta = corte. Se bajan los 4 más recientes (base) y, de ahí en adelante,
+        // lo que se publique. NUNCA el histórico anterior a esa fecha.
+        let byNewest = fresh.episodes.sorted { $0.publishedAt > $1.publishedAt }
+        let base = 4
+        fresh.downloadFromDate = byNewest.count >= base ? byNewest[base - 1].publishedAt
+                                                        : (byNewest.last?.publishedAt ?? Date())
+        podcasts.append(fresh)
         save()
-        applyAutoDownload(for: podcast.id, using: downloads)
+        applyAutoDownload(for: fresh.id, using: downloads)
     }
 
     /// Mantiene descargados los últimos N episodios (según el límite del podcast) y borra los
     /// descargados más antiguos que sobren (rotación). N = todos si el límite es .all.
     func applyAutoDownload(for podcastID: UUID, using downloads: DownloadManager) {
         guard let pi = podcasts.firstIndex(where: { $0.id == podcastID }), podcasts[pi].autoDownload else { return }
+        // Migración: si un podcast viejo no tiene fecha de alta, la fijo al 4º más reciente
+        // (así no vuelve a bajar el histórico).
+        if podcasts[pi].downloadFromDate == nil {
+            let s = podcasts[pi].episodes.sorted { $0.publishedAt > $1.publishedAt }
+            podcasts[pi].downloadFromDate = s.count >= 4 ? s[3].publishedAt : (s.last?.publishedAt ?? Date())
+        }
         let podcast = podcasts[pi]
-        let byNewest = podcast.episodes.sorted { $0.publishedAt > $1.publishedAt }
+        let from = podcast.downloadFromDate ?? .distantPast
+        // SOLO episodios publicados desde el alta (la base + los nuevos). Nunca el histórico.
+        let eligible = podcast.episodes.filter { $0.publishedAt >= from }.sorted { $0.publishedAt > $1.publishedAt }
         let target: Int
         switch podcast.downloadLimit {
-        case .all: target = byNewest.count
+        case .all: target = eligible.count
         case .last(let n): target = n
         }
-        let keep = Array(byNewest.prefix(target))
+        let keep = Array(eligible.prefix(target))
         let keepIDs = Set(keep.map(\.id))
-        // Descargar los que falten (no escuchados).
         for ep in keep where !ep.isDownloaded && !ep.isPlayed {
             downloads.download(ep) { [weak self] in self?.markDownloaded(ep.id, in: podcastID) }
         }
-        // Rotación: borrar los descargados antiguos que ya no entran (sin empezar a escuchar).
+        // Rotación: borrar los descargados que ya no entran (sin empezar a escuchar).
         for ep in podcast.episodes where ep.isDownloaded && !keepIDs.contains(ep.id) && ep.playbackPosition == 0 {
             removeFromDownloads(ep.id, in: podcastID)
         }

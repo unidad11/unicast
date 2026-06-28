@@ -31,10 +31,10 @@ struct StorageView: View {
             List {
                 Section {
                     HStack {
-                        Text("Total descargado").foregroundStyle(.white)
+                        Text("Total descargado").foregroundStyle(Theme.textPrimary)
                         Spacer()
                         Text("\(totalCount) capítulos · \(format(totalBytes))")
-                            .foregroundStyle(Theme.accentLight)
+                            .foregroundStyle(Theme.accent)
                     }
                 }
                 .listRowBackground(Theme.surface)
@@ -47,7 +47,7 @@ struct StorageView: View {
                     ForEach(rows) { row in
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(row.title).foregroundStyle(.white).lineLimit(1)
+                                Text(row.title).foregroundStyle(Theme.textPrimary).lineLimit(1)
                                 Text("\(row.count) capítulos")
                                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                             }
@@ -61,7 +61,7 @@ struct StorageView: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .tint(Theme.accent)
-            .foregroundStyle(.white)
+            .foregroundStyle(Theme.textPrimary)
         }
         .navigationTitle("Almacenamiento")
         .navigationBarTitleDisplayMode(.inline)

@@ -29,6 +29,7 @@ struct RootView: View {
             // Para poder capturar pantallas de otras pestañas en el simulador.
             switch ProcessInfo.processInfo.environment["UNICAST_PREVIEW"] {
             case "playlistDetail", "createPlaylist", "createSmart": store.selectedTab = 1
+            case "discover": store.selectedTab = 2
             case "search", "addPodcast": store.selectedTab = 3
             default: break
             }

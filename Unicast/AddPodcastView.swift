@@ -21,7 +21,7 @@ struct AddPodcastView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Theme.background(.blueNight).ignoresSafeArea()
+                Theme.background().ignoresSafeArea()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -29,7 +29,7 @@ struct AddPodcastView: View {
                         field($url, placeholder: "https://ejemplo.com/feed.xml")
 
                         Toggle(isOn: $isPrivate) {
-                            Label("Es un podcast privado", systemImage: "lock").foregroundStyle(.white)
+                            Label("Es un podcast privado", systemImage: "lock").foregroundStyle(Theme.textPrimary)
                         }
                         .tint(Theme.accent)
 
@@ -66,10 +66,10 @@ struct AddPodcastView: View {
 
                         Button { showImporter = true } label: {
                             HStack(spacing: 10) {
-                                if importing { ProgressView().tint(Theme.accentLight) }
-                                else { Image(systemName: "square.and.arrow.down").foregroundStyle(Theme.accentLight) }
+                                if importing { ProgressView().tint(Theme.accent) }
+                                else { Image(systemName: "square.and.arrow.down").foregroundStyle(Theme.accent) }
                                 Text(importing ? "Importando \(importDone) de \(importTotal)…" : "Importar desde archivo OPML")
-                                    .font(.system(size: 13)).foregroundStyle(.white)
+                                    .font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
                                 Spacer()
                                 Image(systemName: "chevron.right").foregroundStyle(Theme.textMuted)
                             }
@@ -162,7 +162,7 @@ struct AddPodcastView: View {
 
     private func field(_ text: Binding<String>, placeholder: String) -> some View {
         TextField("", text: text, prompt: Text(placeholder).foregroundStyle(Theme.textMuted))
-            .foregroundStyle(.white)
+            .foregroundStyle(Theme.textPrimary)
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
             .keyboardType(.URL)
@@ -173,7 +173,7 @@ struct AddPodcastView: View {
 
     private func secureField(_ text: Binding<String>, placeholder: String) -> some View {
         SecureField("", text: text, prompt: Text(placeholder).foregroundStyle(Theme.textMuted))
-            .foregroundStyle(.white)
+            .foregroundStyle(Theme.textPrimary)
             .padding(.horizontal, 12).padding(.vertical, 11)
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.surfaceBorder))

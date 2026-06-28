@@ -21,11 +21,15 @@ func relativeDay(_ date: Date) -> String {
     return formatter.string(from: date).capitalized
 }
 
-/// Fuente con carácter para los nombres de podcast (aproximación a la "cómic" del diseño,
-/// usando una fuente ya incluida en iOS para no añadir recursos todavía).
-/// Cuando queramos la tipografía exacta (Bangers), se añadirá como recurso del bundle.
+/// Fuente display con carácter (Bangers, estilo cómic/rock) para el wordmark, los títulos
+/// de sección y los nombres de podcast. Va incluida en el bundle (ver UIAppFonts en Info.plist).
 func displayFont(size: CGFloat) -> Font {
-    Font.custom("MarkerFelt-Wide", size: size)
+    Font.custom("Bangers-Regular", size: size)
+}
+
+/// Fuente monoespaciada con carácter (DM Mono) para tiempos, duraciones y contadores.
+func monoFont(size: CGFloat) -> Font {
+    Font.custom("DMMono-Medium", size: size)
 }
 
 /// Formatea segundos como reloj "9:32" o "1:09:32".

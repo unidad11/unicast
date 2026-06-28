@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Rutas dentro de los ajustes generales.
-enum SettingsRoute: Hashable { case background, storage }
+enum SettingsRoute: Hashable { case storage }
 
 /// Ajustes generales de Unicast: apariencia, descargas e importar/exportar OPML.
 struct SettingsView: View {
@@ -18,17 +18,6 @@ struct SettingsView: View {
 
                 List {
                     Section("Apariencia") {
-                        NavigationLink(value: SettingsRoute.background) {
-                            HStack {
-                                Text("Fondo")
-                                Spacer()
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .fill(gradient(store.backgroundStyle))
-                                    .frame(width: 26, height: 18)
-                                Text(store.backgroundStyle.displayName)
-                                    .foregroundStyle(Theme.textSecondary)
-                            }
-                        }
                         Toggle("Contador de nuevos en pósters", isOn: $store.showNewCountBadges)
                         pickerRow("Pantalla de inicio", value: store.libraryLayout.label) {
                             ForEach(LibraryLayout.allCases, id: \.self) { option in
@@ -60,13 +49,12 @@ struct SettingsView: View {
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
                 .tint(Theme.accent)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
             }
             .navigationTitle("Ajustes")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
-                case .background: BackgroundPickerView()
                 case .storage: StorageView()
                 }
             }
@@ -74,15 +62,6 @@ struct SettingsView: View {
                 ToolbarItem(placement: .topBarTrailing) { Button("Cerrar") { dismiss() } }
             }
         }
-        .onAppear {
-            if ProcessInfo.processInfo.environment["UNICAST_PREVIEW"] == "background" {
-                path = [.background]
-            }
-        }
-    }
-
-    private func gradient(_ style: BackgroundStyle) -> LinearGradient {
-        LinearGradient(colors: [style.top, style.bottom], startPoint: .top, endPoint: .bottom)
     }
 
     private func pickerRow<Content: View>(_ title: String, value: String,

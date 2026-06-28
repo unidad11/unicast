@@ -41,24 +41,27 @@ struct PlaylistDetailView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Image(systemName: "ellipsis").foregroundStyle(Color(hex: "C7D2E8"))
+                Image(systemName: "ellipsis").foregroundStyle(Theme.accent)
             }
         }
-        .tint(.white)
+        .tint(Theme.accent)
     }
 
     private var smartBanner: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "bolt.fill")
-                .foregroundStyle(Theme.accentLight)
+                .foregroundStyle(Theme.accent)
                 .font(.system(size: 15))
             Text("Inteligente · los episodios nuevos de tus podcasts entran aquí solos, en el orden que marques.")
                 .font(.system(size: 11))
-                .foregroundStyle(Color(hex: "C8C2E8"))
+                .foregroundStyle(Theme.textSecondary)
         }
-        .padding(11)
-        .background(Color(hex: "1E1B33"), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color(hex: "332C57")))
+        .padding(12)
+        .background(
+            LinearGradient(colors: [.white, Color(hex: "F1EDFF")], startPoint: .top, endPoint: .bottom),
+            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Theme.accent.opacity(0.3)))
     }
 }
 
@@ -74,7 +77,7 @@ private struct PlaylistEpisodeRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(episode.title)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 Text("\(episode.podcastTitle) · \(formatDuration(episode.duration))")
                     .font(.system(size: 11))

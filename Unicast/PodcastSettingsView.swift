@@ -22,7 +22,7 @@ struct PodcastSettingsView: View {
                             PodcastCover(podcast: store.podcasts[i], size: 50)
                             Text(store.podcasts[i].title)
                                 .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.textPrimary)
                         }
                         .listRowBackground(Color.clear)
                     }
@@ -71,7 +71,7 @@ struct PodcastSettingsView: View {
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
                 .tint(Theme.accent)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
             }
         }
         .navigationTitle("Ajustes del podcast")

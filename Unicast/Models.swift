@@ -18,13 +18,14 @@ struct Podcast: Identifiable, Hashable, Codable {
     var continuousDirection: PlayDirection
     var notifyNew: Bool
     var autoDeleteOnFinish: Bool
+    var downloadFromDate: Date?   // solo se descargan episodios publicados desde el alta (no el histórico)
 
     init(id: UUID = UUID(), title: String, author: String, summary: String = "",
          feedURL: URL? = nil, colorHex: String, artworkURL: URL? = nil,
          episodes: [Episode] = [], autoDownload: Bool = true,
          downloadLimit: DownloadLimit = .last(5), sortOrder: EpisodeSort = .newest,
          continuousDirection: PlayDirection = .posteriores, notifyNew: Bool = true,
-         autoDeleteOnFinish: Bool = true) {
+         autoDeleteOnFinish: Bool = true, downloadFromDate: Date? = nil) {
         self.id = id
         self.title = title
         self.author = author
@@ -39,6 +40,7 @@ struct Podcast: Identifiable, Hashable, Codable {
         self.continuousDirection = continuousDirection
         self.notifyNew = notifyNew
         self.autoDeleteOnFinish = autoDeleteOnFinish
+        self.downloadFromDate = downloadFromDate
     }
 
     /// Episodios descargados (pestaña "Descargados").

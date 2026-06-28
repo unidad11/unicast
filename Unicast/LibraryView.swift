@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Pantalla de inicio (Biblioteca): saludo, mini-reproductor, selector de vista
-/// (Cuadrícula / Mazos / Lista) y el contenido. Tocar un podcast lo abre.
+/// (Cuadrícula / Mazos / Lista) y el contenido. Tema claro.
 struct LibraryView: View {
     @Environment(AppStore.self) private var store
     @Environment(DownloadManager.self) private var downloads
@@ -16,7 +16,7 @@ struct LibraryView: View {
 
         NavigationStack(path: $path) {
             ZStack {
-                Theme.background(store.backgroundStyle).ignoresSafeArea()
+                Theme.background().ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     ScrollView {
@@ -105,7 +105,6 @@ struct LibraryView: View {
         }
     }
 
-    /// Menú al mantener pulsado un podcast en la biblioteca.
     @ViewBuilder
     private func podcastMenu(_ podcast: Podcast) -> some View {
         Button { store.clearDownloads(for: podcast.id) } label: {
@@ -121,16 +120,15 @@ struct LibraryView: View {
     private var header: some View {
         HStack {
             Text("unicast")
-                .font(.system(size: 23, weight: .semibold))
-                .kerning(-1)
-                .foregroundStyle(.white)
+                .font(displayFont(size: 26))
+                .foregroundStyle(Theme.textPrimary)
             Spacer()
             HStack(spacing: 16) {
                 Image(systemName: "magnifyingglass")
-                Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                Button { showSettings = true } label: { Image(systemName: "gearshape.fill") }
             }
             .font(.system(size: 19))
-            .foregroundStyle(Color(hex: "C7D2E8"))
+            .foregroundStyle(Theme.accent)
         }
     }
 
@@ -138,13 +136,13 @@ struct LibraryView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Buenas noches")
                 .font(.system(size: 14))
-                .foregroundStyle(Color(hex: "A9B6D4"))
+                .foregroundStyle(Theme.textSecondary)
             (
-                Text("Tienes ").foregroundStyle(.white)
-                + Text("\(store.newEpisodeCount) episodios").foregroundStyle(Theme.accentLight)
-                + Text(" nuevos").foregroundStyle(.white)
+                Text("Tienes ").foregroundStyle(Theme.textPrimary)
+                + Text("\(store.newEpisodeCount) episodios").foregroundStyle(Theme.accent)
+                + Text(" por escuchar").foregroundStyle(Theme.textPrimary)
             )
-            .font(.system(size: 25, weight: .bold))
+            .font(displayFont(size: 27))
         }
     }
 

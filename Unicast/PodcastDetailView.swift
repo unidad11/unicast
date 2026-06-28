@@ -2,10 +2,11 @@ import SwiftUI
 
 /// Pantalla de dentro de un podcast: cabecera con portada, resumen del autor,
 /// pestañas Descargados / Todos y la lista de episodios. Con "Seleccionar" se marcan
-/// varios episodios para enviarlos a una lista o borrarlos de golpe.
+/// varios episodios para enviarlos a una lista o borrarlos de golpe. Tema claro.
 struct PodcastDetailView: View {
     @Environment(AppStore.self) private var store
     @Environment(AudioPlayer.self) private var audio
+    @Environment(ColorExtractor.self) private var colors
     let podcast: Podcast
 
     @State private var tab: PodcastTab = .downloaded
@@ -13,6 +14,7 @@ struct PodcastDetailView: View {
     @State private var isSelecting = false
     @State private var selected: Set<UUID> = []
     @State private var showAddToPlaylist = false
+    @State private var tint: Color?
 
     private var current: Podcast { store.podcast(id: podcast.id) ?? podcast }
 
@@ -25,7 +27,7 @@ struct PodcastDetailView: View {
 
     var body: some View {
         ZStack {
-            Theme.background(store.backgroundStyle).ignoresSafeArea()
+            backgroundView
 
             VStack(spacing: 0) {
                 List {
@@ -53,12 +55,12 @@ struct PodcastDetailView: View {
                     Button("Listo") { isSelecting = false; selected = [] }
                 } else {
                     Button { showSettings = true } label: {
-                        Image(systemName: "ellipsis").foregroundStyle(Color(hex: "C7D2E8"))
+                        Image(systemName: "ellipsis").foregroundStyle(Theme.accent)
                     }
                 }
             }
         }
-        .tint(.white)
+        .tint(Theme.accent)
         .sheet(isPresented: $showSettings) {
             NavigationStack { PodcastSettingsView(podcastID: podcast.id) }
         }
@@ -74,6 +76,23 @@ struct PodcastDetailView: View {
                 selected = Set(episodes.prefix(2).map(\.id))
             }
         }
+        .task(id: current.id) {
+            await colors.load(current.artworkURL)
+            tint = colors.color(for: current.artworkURL) ?? ColorExtractor.soft(hex: current.colorHex)
+        }
+    }
+
+    /// Fondo teñido con el color del podcast (cabecera estilo Brink) que baja a lavanda.
+    private var backgroundView: some View {
+        Group {
+            if let tint {
+                LinearGradient(colors: [tint, Color(hex: "DAD5E3")], startPoint: .top, endPoint: .bottom)
+            } else {
+                Theme.background()
+            }
+        }
+        .ignoresSafeArea()
+        .animation(.easeInOut(duration: 0.5), value: tint)
     }
 
     // MARK: - Cabecera
@@ -85,16 +104,16 @@ struct PodcastDetailView: View {
                     PodcastCover(podcast: current, size: 80)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(current.title)
-                            .font(displayFont(size: 22)).foregroundStyle(.white).lineLimit(2)
+                            .font(displayFont(size: 22)).foregroundStyle(Theme.textPrimary).lineLimit(2)
                         Text("\(current.author) · \(current.episodes.count) episodios")
-                            .font(.system(size: 11)).foregroundStyle(Color(hex: "A9B6D4"))
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer(minLength: 0)
                 }
 
                 if !current.summary.isEmpty {
                     Text(current.summary)
-                        .font(.system(size: 11)).foregroundStyle(Color(hex: "AEB8CC"))
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .lineLimit(2).lineSpacing(1)
                 }
 
@@ -104,14 +123,24 @@ struct PodcastDetailView: View {
                 .pickerStyle(.segmented)
 
                 HStack {
-                    Label(current.sortOrder.label, systemImage: "arrow.up.arrow.down")
-                        .font(.system(size: 11)).foregroundStyle(Color(hex: "C7D2E8"))
+                    if isSelecting {
+                        Button(selected.count == episodes.count && !episodes.isEmpty ? "Ninguno" : "Todos") {
+                            if selected.count == episodes.count { selected = [] }
+                            else { selected = Set(episodes.map(\.id)) }
+                        }
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.accent)
+                        .buttonStyle(.borderless)   // independiente dentro de la List (clave del bug)
+                    } else {
+                        Label(current.sortOrder.label, systemImage: "arrow.up.arrow.down")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    }
                     Spacer()
                     Button(isSelecting ? "Cancelar" : "Seleccionar") {
                         isSelecting.toggle()
                         if !isSelecting { selected = [] }
                     }
-                    .font(.system(size: 11)).foregroundStyle(Theme.accentLight)
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.accent)
+                    .buttonStyle(.borderless)   // independiente dentro de la List
                 }
             }
             .padding(.vertical, 6)
@@ -158,14 +187,14 @@ struct PodcastDetailView: View {
             Button { showAddToPlaylist = true } label: {
                 Label("Añadir a lista", systemImage: "text.badge.plus")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).padding(.vertical, 11)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             Button { store.removeEpisodes(selected, from: current.id); isSelecting = false; selected = [] } label: {
-                Label("Borrar", systemImage: "trash")
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(hex: "E24B4A"))
-                    .frame(maxWidth: .infinity).padding(.vertical, 11)
-                    .background(Color(hex: "2A1518"), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                Label("Borrar (\(selected.count))", systemImage: "trash")
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(Color(hex: "D23A39"))
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Color(hex: "FBE6E6"), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
         .buttonStyle(.plain)
@@ -205,16 +234,16 @@ private struct EpisodeRow: View {
         HStack(alignment: .center, spacing: 10) {
             if isSelecting {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 19))
+                    .font(.system(size: 20))
                     .foregroundStyle(isSelected ? Theme.accent : Theme.textMuted)
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(metaLine)
                     .font(.system(size: 11))
-                    .foregroundStyle(inProgress ? Theme.accentLight : Theme.textSecondary)
+                    .foregroundStyle(inProgress ? Theme.accent : Theme.textSecondary)
                 Text(episode.title)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(audio.currentEpisode?.id == episode.id ? Theme.accentLight : .white)
+                    .foregroundStyle(audio.currentEpisode?.id == episode.id ? Theme.accent : Theme.textPrimary)
                     .lineLimit(2)
                 if !episode.summary.isEmpty {
                     Text(episode.summary)
@@ -225,7 +254,7 @@ private struct EpisodeRow: View {
             if !isSelecting { actionButton }
         }
         .padding(.vertical, 11)
-        .opacity(episode.isPlayed && !isSelecting ? 0.5 : 1)   // escuchado: tono apagado
+        .opacity(episode.isPlayed && !isSelecting ? 0.45 : 1)   // escuchado: tono apagado
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -246,24 +275,24 @@ private struct EpisodeRow: View {
             Button { let ep = store.enrich(episode); store.nowPlaying = ep; audio.play(ep); store.isPlayerPresented = true } label: {
                 Image(systemName: "play.fill")
                     .font(.system(size: 14))
-                    .foregroundStyle(inProgress ? .white : Color(hex: "C7D2E8"))
+                    .foregroundStyle(inProgress ? .white : Theme.accent)
                     .frame(width: 33, height: 33)
                     .background {
                         if inProgress { Circle().fill(Theme.accent) }
-                        else { Circle().stroke(Color(hex: "4A4F60"), lineWidth: 1.5) }
+                        else { Circle().stroke(Theme.textMuted, lineWidth: 1.5) }
                     }
             }
             .buttonStyle(.plain)
         } else if downloads.downloading.contains(episode.id) {
-            ProgressView().tint(Theme.accentLight).frame(width: 33, height: 33)
+            ProgressView().tint(Theme.accent).frame(width: 33, height: 33)
         } else {
             Button {
                 downloads.download(episode) { store.markDownloaded(episode.id, in: podcastID) }
             } label: {
                 Image(systemName: "arrow.down")
-                    .font(.system(size: 14)).foregroundStyle(Color(hex: "C7D2E8"))
+                    .font(.system(size: 14)).foregroundStyle(Theme.accent)
                     .frame(width: 33, height: 33)
-                    .background { Circle().stroke(Color(hex: "4A4F60"), lineWidth: 1.5) }
+                    .background { Circle().stroke(Theme.textMuted, lineWidth: 1.5) }
             }
             .buttonStyle(.plain)
         }

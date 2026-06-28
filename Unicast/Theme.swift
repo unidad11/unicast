@@ -1,38 +1,47 @@
 import SwiftUI
 
-/// Sistema de diseño de Unicast: acento, textos, superficies y degradados de fondo.
-/// Centraliza los colores para que toda la app tenga la misma cara.
+/// Sistema de diseño de Unicast — tema CLARO/lavanda (rediseño 2026).
+/// El morado sigue siendo el acento de identidad.
 enum Theme {
-    /// Acento principal (morado). Identidad de Unicast.
+    // Acento / identidad
     static let accent = Color(hex: "6B5CE7")
-    static let accentLight = Color(hex: "9D8CFF")
+    static let accentDark = Color(hex: "574AC9")
+    static let accentLight = Color(hex: "8C7DF2")
 
-    // Textos sobre fondo oscuro
-    static let textPrimary = Color.white
-    static let textSecondary = Color(hex: "8E97AD")
-    static let textMuted = Color(hex: "5A627A")
+    // Textos sobre superficie clara
+    static let textPrimary = Color(hex: "1A1622")
+    static let textSecondary = Color(hex: "6E6783")
+    static let textMuted = Color(hex: "A39DAF")
 
-    // Superficies y separadores
-    static let surface = Color(hex: "161A24")
-    static let surfaceBorder = Color(hex: "232838")
-    static let divider = Color(hex: "1A1E2A")
+    // Superficies
+    static let surface = Color.white               // tarjetas
+    static let surfaceSoft = Color(hex: "F2EFF6")  // chips, fondos internos
+    static let surfaceBorder = Color.black.opacity(0.06)
+    static let divider = Color.black.opacity(0.07)
 
-    /// Devuelve el degradado de fondo según el estilo elegido en Ajustes.
-    static func background(_ style: BackgroundStyle) -> LinearGradient {
-        LinearGradient(colors: [style.top, style.bottom], startPoint: .top, endPoint: .bottom)
+    /// Degradado de fondo claro lavanda. (El tinte por podcast se aplica aparte.)
+    static func background(_ style: BackgroundStyle = .lavender) -> LinearGradient {
+        LinearGradient(colors: [Color(hex: "DAD5E3"), Color(hex: "C7BFD8")],
+                       startPoint: .top, endPoint: .bottom)
+    }
+
+    /// Degradado del fondo teñido con el color de un podcast (cabeceras, reproductor).
+    static func tinted(_ color: Color) -> LinearGradient {
+        LinearGradient(colors: [color.opacity(0.55), Color(hex: "DAD5E3")],
+                       startPoint: .top, endPoint: .bottom)
     }
 }
 
-/// Estilos de degradado de fondo que el usuario puede elegir en Ajustes.
-/// (El fondo no es negro plano: un degradado le da vida.)
+/// Estilos de fondo (de momento el tema es claro fijo; se conserva el enum para el selector
+/// de Ajustes, que se replanteará en la fase de pulido del rediseño).
 enum BackgroundStyle: String, CaseIterable, Identifiable, Codable {
-    case blueNight, amber, ember, forest, purple, black
+    case lavender, blueNight, amber, ember, forest, purple, black
 
     var id: String { rawValue }
 
-    /// Nombre mostrado en la pantalla de Ajustes.
     var displayName: String {
         switch self {
+        case .lavender: "Lavanda"
         case .blueNight: "Azul noche"
         case .amber: "Ámbar"
         case .ember: "Brasa"
@@ -42,9 +51,9 @@ enum BackgroundStyle: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// Color de la parte de arriba del degradado.
     var top: Color {
         switch self {
+        case .lavender: Color(hex: "DAD5E3")
         case .blueNight: Color(hex: "14264F")
         case .amber: Color(hex: "3A2A0A")
         case .ember: Color(hex: "3A1410")
@@ -54,8 +63,7 @@ enum BackgroundStyle: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// Color de la parte de abajo (siempre el negro de Unicast).
-    var bottom: Color { Color(hex: "0A0A0B") }
+    var bottom: Color { Color(hex: "C7BFD8") }
 }
 
 extension Color {

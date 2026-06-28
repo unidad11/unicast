@@ -30,7 +30,7 @@ struct CreatePlaylistView: View {
                     Section {
                         TextField("", text: $name,
                                   prompt: Text("Nombre de la lista").foregroundStyle(Theme.textMuted))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.textPrimary)
                     }
                     .listRowBackground(Theme.surface)
 
@@ -44,7 +44,7 @@ struct CreatePlaylistView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.textPrimary)
             }
             .navigationTitle("Nueva lista")
             .navigationBarTitleDisplayMode(.inline)
@@ -78,7 +78,7 @@ struct CreatePlaylistView: View {
                 .fill(Color(hex: episode.colorHex)).frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 1) {
                 Text(episode.title).font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white).lineLimit(1)
+                    .foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(episode.podcastTitle).font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
@@ -114,22 +114,22 @@ struct MakeSmartSheet: View {
 
     var body: some View {
         ZStack {
-            Theme.background(.purple).ignoresSafeArea()
+            Theme.background().ignoresSafeArea()
 
             VStack(spacing: 0) {
-                Capsule().fill(Color(hex: "3A3F4D")).frame(width: 36, height: 5).padding(.top, 10)
+                Capsule().fill(Theme.textMuted.opacity(0.4)).frame(width: 36, height: 5).padding(.top, 10)
 
-                Circle().fill(Color(hex: "251F40")).frame(width: 48, height: 48)
-                    .overlay { Image(systemName: "bolt.fill").foregroundStyle(Theme.accentLight).font(.system(size: 24)) }
+                Circle().fill(Theme.surfaceSoft).frame(width: 54, height: 54)
+                    .overlay { Image(systemName: "bolt.fill").foregroundStyle(Theme.accent).font(.system(size: 26)) }
                     .padding(.top, 18)
 
                 Text("¿Hacerla inteligente?")
-                    .font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
+                    .font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.textPrimary)
                     .padding(.top, 12)
 
                 Text("Los episodios nuevos de \(formattedNames) entrarán en esta lista solos. Tú sigues decidiendo el orden.")
                     .font(.system(size: 12))
-                    .foregroundStyle(Color(hex: "AEB8CC"))
+                    .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28).padding(.top, 8)
 
@@ -146,7 +146,7 @@ struct MakeSmartSheet: View {
 
                 Button { decision(false) } label: {
                     Text("No, dejarla manual")
-                        .font(.system(size: 13)).foregroundStyle(Color(hex: "C7D2E8"))
+                        .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                         .padding(11)
                 }
                 .buttonStyle(.plain)

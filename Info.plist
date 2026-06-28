@@ -5,6 +5,17 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.jbs.Unicast.refresh</string>
+	</array>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Bangers-Regular.ttf</string>
+		<string>DMMono-Medium.ttf</string>
 	</array>
 </dict>
 </plist>
