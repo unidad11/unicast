@@ -19,7 +19,10 @@ struct UnicastApp: App {
                 .environment(colorExtractor)
                 .preferredColorScheme(.light) // Unicast es clara por diseño (rediseño 2026)
                 .onChange(of: scenePhase) { _, phase in
-                    if phase != .active {
+                    if phase == .active {
+                        // Al volver a la app: refresco automático (si el último tiene >5 min).
+                        Task { await store.refreshIfStale(downloads: downloadManager) }
+                    } else {
                         if let episode = audioPlayer.currentEpisode {
                             let remaining = audioPlayer.duration - audioPlayer.currentTime
                             if audioPlayer.duration > 0, remaining < 40 {

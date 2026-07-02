@@ -49,17 +49,26 @@ final class AppStore {
 
     /// Borra un episodio de un podcast (deslizar para borrar).
     func removeEpisode(_ episodeID: UUID, from podcastID: UUID) {
-        guard let index = podcasts.firstIndex(where: { $0.id == podcastID }) else { return }
-        podcasts[index].episodes.removeAll { $0.id == episodeID }
-        DownloadManager.deleteFile(for: episodeID)
-        save()
+        discard([episodeID], in: podcastID)
     }
 
     /// Borra varios episodios a la vez (selección múltiple).
     func removeEpisodes(_ episodeIDs: Set<UUID>, from podcastID: UUID) {
-        guard let index = podcasts.firstIndex(where: { $0.id == podcastID }) else { return }
-        podcasts[index].episodes.removeAll { episodeIDs.contains($0.id) }
-        for id in episodeIDs { DownloadManager.deleteFile(for: id) }
+        discard(Array(episodeIDs), in: podcastID)
+    }
+
+    /// Descarta episodios: borra el audio y los marca escuchados SIN sacarlos del registro.
+    /// Clave anti-bug: si se eliminaran del todo, el siguiente refresco los traería como
+    /// "nuevos" y el auto-descargar los volvería a bajar (los 4 que resucitaban).
+    private func discard(_ episodeIDs: [UUID], in podcastID: UUID) {
+        guard let pi = podcasts.firstIndex(where: { $0.id == podcastID }) else { return }
+        let ids = Set(episodeIDs)
+        for ei in podcasts[pi].episodes.indices where ids.contains(podcasts[pi].episodes[ei].id) {
+            DownloadManager.deleteFile(for: podcasts[pi].episodes[ei].id)
+            podcasts[pi].episodes[ei].isDownloaded = false
+            podcasts[pi].episodes[ei].isPlayed = true   // apagado en "Todos"; nunca se re-descarga
+            podcasts[pi].episodes[ei].playbackPosition = 0
+        }
         save()
     }
 
@@ -117,9 +126,14 @@ final class AppStore {
         save()
     }
 
-    /// Deja de seguir un podcast (lo quita de la biblioteca).
+    /// Deja de seguir un podcast: borra sus audios descargados (que no queden huérfanos
+    /// ocupando espacio) y lo quita de la biblioteca.
     func removePodcast(_ id: UUID) {
+        if let podcast = podcasts.first(where: { $0.id == id }) {
+            for ep in podcast.episodes where ep.isDownloaded { DownloadManager.deleteFile(for: ep.id) }
+        }
         podcasts.removeAll { $0.id == id }
+        save()
     }
 
     /// Crea una lista manual con los episodios indicados. Devuelve su id.
@@ -212,12 +226,30 @@ final class AppStore {
         podcasts.contains { $0.title == podcast.title }
     }
 
-    /// Refresca los feeds reales: trae los episodios nuevos sin perder el estado de los que ya hay.
+    /// Fecha del último refresco completado (para no repetirlo a cada rato al volver a la app).
+    var lastRefreshAt: Date?
+
+    /// Refresca los feeds reales EN PARALELO (antes iban de uno en uno y con muchos podcasts
+    /// tardaba una eternidad): trae los episodios nuevos sin perder el estado de los que ya hay,
+    /// alimenta las listas inteligentes y aplica el auto-descargar.
     func refresh(downloads: DownloadManager) async {
+        // 1. Descargar todos los feeds a la vez.
+        let current = podcasts
+        var fetched: [UUID: Podcast] = [:]
+        await withTaskGroup(of: (UUID, Podcast?).self) { group in
+            for podcast in current {
+                guard let feed = podcast.feedURL else { continue }
+                group.addTask { [colorHex = podcast.colorHex] in
+                    (podcast.id, await PodcastService.fetchPodcast(feedURL: feed, colorHex: colorHex))
+                }
+            }
+            for await (id, fresh) in group {
+                if let fresh { fetched[id] = fresh }
+            }
+        }
+        // 2. Volcar lo nuevo sin tocar el estado de lo que ya había.
         for index in podcasts.indices {
-            guard let feed = podcasts[index].feedURL,
-                  let fresh = await PodcastService.fetchPodcast(feedURL: feed, colorHex: podcasts[index].colorHex)
-            else { continue }
+            guard let fresh = fetched[podcasts[index].id] else { continue }
             var updated = podcasts[index]
             updated.summary = fresh.summary.isEmpty ? updated.summary : fresh.summary
             updated.artworkURL = fresh.artworkURL ?? updated.artworkURL
@@ -225,9 +257,27 @@ final class AppStore {
             let newEpisodes = fresh.episodes.filter { !knownTitles.contains($0.title) }
             updated.episodes = newEpisodes + updated.episodes   // los nuevos, primero
             podcasts[index] = updated
+            addToSmartPlaylists(newEpisodes, from: updated.id)
             applyAutoDownload(for: updated.id, using: downloads)   // baja nuevos y rota el límite
         }
+        lastRefreshAt = Date()
         save()
+    }
+
+    /// Refresca solo si el último refresco tiene más de 5 minutos (al volver a la app).
+    func refreshIfStale(downloads: DownloadManager) async {
+        guard Date().timeIntervalSince(lastRefreshAt ?? .distantPast) > 5 * 60 else { return }
+        await refresh(downloads: downloads)
+    }
+
+    /// Mete los episodios nuevos en las listas inteligentes que siguen a ese podcast
+    /// (la promesa de "los nuevos entran solos"; antes no estaba conectado al refresco).
+    private func addToSmartPlaylists(_ episodes: [Episode], from podcastID: UUID) {
+        guard !episodes.isEmpty else { return }
+        for index in playlists.indices
+        where playlists[index].isSmart && playlists[index].sourcePodcastOrder.contains(podcastID) {
+            playlists[index].episodeIDs.append(contentsOf: episodes.map(\.id))
+        }
     }
 
     /// Busca un episodio por su id en toda la biblioteca.
