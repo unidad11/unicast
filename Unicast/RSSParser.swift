@@ -75,7 +75,8 @@ final class RSSParser: NSObject, XMLParserDelegate {
             }
         case "psc:chapter":
             if let start = attributeDict["start"], let title = attributeDict["title"] {
-                iChapters.append(Chapter(title: title, start: timecode(start), colorHex: colorHex))
+                let image = attributeDict["image"].flatMap { URL(string: $0) }
+                iChapters.append(Chapter(title: title, start: timecode(start), colorHex: colorHex, imageURL: image))
             }
         default:
             break

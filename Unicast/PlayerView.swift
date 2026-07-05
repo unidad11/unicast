@@ -252,9 +252,13 @@ struct NotesChaptersView: View {
                             .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                         ForEach(episode.chapters) { chapter in
                             HStack(spacing: 10) {
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(Color(hex: chapter.colorHex))
-                                    .frame(width: 36, height: 36)
+                                Group {
+                                    if let url = chapter.imageURL {
+                                        AsyncImage(url: url) { image in image.resizable().aspectRatio(contentMode: .fill) } placeholder: { Color(hex: chapter.colorHex) }
+                                    } else { Color(hex: chapter.colorHex) }
+                                }
+                                .frame(width: 36, height: 36)
+                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(formatClock(chapter.start))
                                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)

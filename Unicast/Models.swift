@@ -96,13 +96,15 @@ struct Chapter: Identifiable, Hashable, Codable {
     let id: UUID
     var title: String
     var start: TimeInterval    // segundo en el que empieza
-    var colorHex: String       // color de la imagen del capítulo
+    var colorHex: String       // color de respaldo si el autor no puso imagen
+    var imageURL: URL?         // imagen real del capítulo, si el autor la incluyó en el feed
 
-    init(id: UUID = UUID(), title: String, start: TimeInterval, colorHex: String) {
+    init(id: UUID = UUID(), title: String, start: TimeInterval, colorHex: String, imageURL: URL? = nil) {
         self.id = id
         self.title = title
         self.start = start
         self.colorHex = colorHex
+        self.imageURL = imageURL
     }
 }
 
