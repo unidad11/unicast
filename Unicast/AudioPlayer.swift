@@ -19,6 +19,13 @@ final class AudioPlayer {
     /// Se llama cuando un episodio llega al final (para autoborrarlo).
     @ObservationIgnored var onFinished: ((UUID) -> Void)?
     @ObservationIgnored private var artworkImage: UIImage?
+    @ObservationIgnored private var lastArtworkURL: URL?
+
+    /// Imagen de la sección que suena ahora mismo (según el minuto actual), si el episodio trae capítulos con imagen.
+    var currentChapterArtworkURL: URL? {
+        guard let chapters = currentEpisode?.chapters, !chapters.isEmpty else { return nil }
+        return chapters.filter { $0.start <= currentTime }.max(by: { $0.start < $1.start })?.imageURL
+    }
 
     init() {
         configureSession()
@@ -36,7 +43,7 @@ final class AudioPlayer {
     /// Carga un episodio sin reproducir (para "recordar el último" al abrir la app).
     func prepare(_ episode: Episode) {
         currentEpisode = episode
-        loadArtwork(episode.artworkURL)
+        lastArtworkURL = nil
         duration = episode.duration
         currentTime = episode.playbackPosition
         // Si está descargado, reproduce el archivo local; si no, hace streaming.
@@ -47,7 +54,16 @@ final class AudioPlayer {
             seekPlayer(to: episode.playbackPosition)
         }
         isPlaying = false
+        refreshArtworkIfNeeded()
         updateNowPlaying()
+    }
+
+    /// Actualiza los capítulos del episodio en curso (p.ej. tras descargarlos del JSON aparte)
+    /// y refresca la portada al momento si toca cambiar de imagen.
+    func updateChapters(_ chapters: [Chapter], for episodeID: UUID) {
+        guard currentEpisode?.id == episodeID else { return }
+        currentEpisode?.chapters = chapters
+        refreshArtworkIfNeeded()
     }
 
     /// Reproduce un episodio (desde donde se quedó).
@@ -69,6 +85,7 @@ final class AudioPlayer {
     func seek(to seconds: TimeInterval) {
         currentTime = min(max(0, seconds), duration)
         seekPlayer(to: currentTime)
+        refreshArtworkIfNeeded()
         updateNowPlaying()
     }
 
@@ -98,6 +115,7 @@ final class AudioPlayer {
                itemDuration.isFinite, itemDuration > 0 {
                 self.duration = itemDuration
             }
+            self.refreshArtworkIfNeeded()
             self.updateNowPlaying()
         }
     }
@@ -113,6 +131,15 @@ final class AudioPlayer {
         // Algunos AirPods/mandos mandan next/previous: los tratamos como ±30 s.
         center.nextTrackCommand.addTarget { [weak self] _ in self?.skip(by: 30); return .success }
         center.previousTrackCommand.addTarget { [weak self] _ in self?.skip(by: -30); return .success }
+    }
+
+    /// Decide qué imagen toca mostrar ahora (la de la sección en curso, o si no, la del episodio)
+    /// y solo recarga si de verdad ha cambiado (evita pedir la misma imagen cada medio segundo).
+    private func refreshArtworkIfNeeded() {
+        let target = currentChapterArtworkURL ?? currentEpisode?.artworkURL
+        guard target != lastArtworkURL else { return }
+        lastArtworkURL = target
+        loadArtwork(target)
     }
 
     /// Descarga la carátula y refresca la info de la pantalla de bloqueo / isla.

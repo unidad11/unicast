@@ -84,7 +84,7 @@ struct PlayerView: View {
 
     private func cover(_ ep: Episode) -> some View {
         Group {
-            if let url = ep.artworkURL ?? podcastArtwork(for: ep) {
+            if let url = audio.currentChapterArtworkURL ?? ep.artworkURL ?? podcastArtwork(for: ep) {
                 AsyncImage(url: url) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { colorCover(ep) }
@@ -313,6 +313,7 @@ struct NotesChaptersView: View {
             guard !chapters.isEmpty else { return }
             loadedChapters = chapters
             store.setChapters(chapters, for: episode.id)
+            audio.updateChapters(chapters, for: episode.id)
         }
     }
 }
