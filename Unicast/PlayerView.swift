@@ -222,11 +222,18 @@ struct PlayerView: View {
 /// Hoja con las notas del autor y los capítulos (con sus imágenes) del episodio.
 struct NotesChaptersView: View {
     @Environment(AppStore.self) private var store
+    @Environment(AudioPlayer.self) private var audio
+    @Environment(\.dismiss) private var dismiss
     let episode: Episode
     @State private var loadedChapters: [Chapter] = []
 
     /// Los capítulos a mostrar: los del feed si ya vinieron incrustados, o los del JSON aparte una vez descargados.
     private var displayChapters: [Chapter] { episode.chapters.isEmpty ? loadedChapters : episode.chapters }
+
+    /// Icono del podcast, de respaldo cuando una sección no trae su propia imagen.
+    private var podcastArtworkURL: URL? {
+        episode.artworkURL ?? store.podcasts.first(where: { $0.title == episode.podcastTitle })?.artworkURL
+    }
 
     var body: some View {
         ZStack {
@@ -257,7 +264,7 @@ struct NotesChaptersView: View {
                         ForEach(displayChapters) { chapter in
                             HStack(spacing: 10) {
                                 Group {
-                                    if let url = chapter.imageURL {
+                                    if let url = chapter.imageURL ?? podcastArtworkURL {
                                         AsyncImage(url: url) { image in image.resizable().aspectRatio(contentMode: .fill) } placeholder: { Color(hex: chapter.colorHex) }
                                     } else { Color(hex: chapter.colorHex) }
                                 }
@@ -276,6 +283,12 @@ struct NotesChaptersView: View {
                                             .foregroundStyle(Theme.accent)
                                     }
                                 }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                audio.seek(to: chapter.start)
+                                if !audio.isPlaying { audio.togglePlayPause() }
+                                dismiss()
                             }
                         }
                     }
