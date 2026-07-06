@@ -32,6 +32,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
     private var iDate = Date()
     private var iImage: URL?
     private var iChapters: [Chapter] = []
+    private var iChaptersURL: URL?
 
     init(feedURL: URL?, colorHex: String = "5B5BD6") {
         self.feedURL = feedURL
@@ -64,7 +65,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
         case "item":
             inItem = true
             iTitle = ""; iSummary = ""; iAudio = nil; iDuration = 0
-            iDate = Date(); iImage = nil; iChapters = []
+            iDate = Date(); iImage = nil; iChapters = []; iChaptersURL = nil
         case "image" where !inItem:
             inChannelImage = true
         case "enclosure":
@@ -78,6 +79,8 @@ final class RSSParser: NSObject, XMLParserDelegate {
                 let image = attributeDict["image"].flatMap { URL(string: $0) }
                 iChapters.append(Chapter(title: title, start: timecode(start), colorHex: colorHex, imageURL: image))
             }
+        case "podcast:chapters":
+            if let urlString = attributeDict["url"] { iChaptersURL = URL(string: urlString) }
         default:
             break
         }
@@ -103,7 +106,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
                 episodes.append(Episode(
                     title: iTitle, summary: iSummary.trimmed, podcastTitle: channelTitle.trimmed,
                     colorHex: colorHex, artworkURL: iImage ?? channelImage, audioURL: iAudio,
-                    duration: iDuration, publishedAt: iDate, chapters: iChapters
+                    duration: iDuration, publishedAt: iDate, chapters: iChapters, chaptersURL: iChaptersURL
                 ))
                 inItem = false
             default:

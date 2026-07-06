@@ -91,6 +91,17 @@ final class AppStore {
         }
     }
 
+    /// Guarda los capítulos descargados del JSON aparte, para no volver a pedirlos cada vez.
+    func setChapters(_ chapters: [Chapter], for episodeID: UUID) {
+        for pi in podcasts.indices {
+            if let ei = podcasts[pi].episodes.firstIndex(where: { $0.id == episodeID }) {
+                podcasts[pi].episodes[ei].chapters = chapters
+                save()
+                return
+            }
+        }
+    }
+
     /// Al terminar un episodio: autoborrado (quita el audio y lo saca de Descargados → vuelve a Todos).
     func handleFinished(_ episodeID: UUID) {
         DownloadManager.deleteFile(for: episodeID)
@@ -256,6 +267,11 @@ final class AppStore {
             let knownTitles = Set(updated.episodes.map(\.title))
             let newEpisodes = fresh.episodes.filter { !knownTitles.contains($0.title) }
             updated.episodes = newEpisodes + updated.episodes   // los nuevos, primero
+            // Rellena la URL de capítulos en episodios ya existentes (podcasts dados de alta antes de este arreglo).
+            let freshByTitle = Dictionary(fresh.episodes.map { ($0.title, $0) }, uniquingKeysWith: { a, _ in a })
+            for ei in updated.episodes.indices where updated.episodes[ei].chaptersURL == nil {
+                if let match = freshByTitle[updated.episodes[ei].title] { updated.episodes[ei].chaptersURL = match.chaptersURL }
+            }
             podcasts[index] = updated
             addToSmartPlaylists(newEpisodes, from: updated.id)
             applyAutoDownload(for: updated.id, using: downloads)   // baja nuevos y rota el límite

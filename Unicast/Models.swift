@@ -65,10 +65,12 @@ struct Episode: Identifiable, Hashable, Codable {
     var isPlayed: Bool              // ya escuchado: no reaparece en "Todos"
     var playbackPosition: TimeInterval  // dónde se quedó, para retomar (puntos 11 y 12)
     var chapters: [Chapter]
+    var chaptersURL: URL?    // capítulos en un JSON aparte (formato Podcasting 2.0), si el feed los trae así
 
     init(id: UUID = UUID(), title: String, summary: String = "", podcastTitle: String,
          colorHex: String, artworkURL: URL? = nil, audioURL: URL? = nil, duration: TimeInterval, publishedAt: Date,
-         isDownloaded: Bool = false, isPlayed: Bool = false, playbackPosition: TimeInterval = 0, chapters: [Chapter] = []) {
+         isDownloaded: Bool = false, isPlayed: Bool = false, playbackPosition: TimeInterval = 0, chapters: [Chapter] = [],
+         chaptersURL: URL? = nil) {
         self.id = id
         self.title = title
         self.summary = summary
@@ -82,6 +84,7 @@ struct Episode: Identifiable, Hashable, Codable {
         self.isPlayed = isPlayed
         self.playbackPosition = playbackPosition
         self.chapters = chapters
+        self.chaptersURL = chaptersURL
     }
 
     /// Tiempo que falta para terminar, en segundos.
@@ -98,13 +101,15 @@ struct Chapter: Identifiable, Hashable, Codable {
     var start: TimeInterval    // segundo en el que empieza
     var colorHex: String       // color de respaldo si el autor no puso imagen
     var imageURL: URL?         // imagen real del capítulo, si el autor la incluyó en el feed
+    var linkURL: URL?          // enlace del capítulo (p.ej. al producto del que habla), si lo trae
 
-    init(id: UUID = UUID(), title: String, start: TimeInterval, colorHex: String, imageURL: URL? = nil) {
+    init(id: UUID = UUID(), title: String, start: TimeInterval, colorHex: String, imageURL: URL? = nil, linkURL: URL? = nil) {
         self.id = id
         self.title = title
         self.start = start
         self.colorHex = colorHex
         self.imageURL = imageURL
+        self.linkURL = linkURL
     }
 }
 

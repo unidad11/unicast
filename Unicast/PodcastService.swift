@@ -37,6 +37,17 @@ enum PodcastService {
         return RSSParser(feedURL: feedURL, colorHex: colorHex).parse(data: data)
     }
 
+    /// Descarga y decodifica un archivo de capítulos "Podcasting 2.0" (`podcast:chapters` del RSS).
+    static func fetchChapters(from url: URL, colorHex: String) async -> [Chapter] {
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let document = try? JSONDecoder().decode(ChaptersDocument.self, from: data)
+        else { return [] }
+        return document.chapters.map {
+            Chapter(title: $0.title, start: $0.startTime, colorHex: colorHex,
+                    imageURL: $0.img.flatMap(URL.init(string:)), linkURL: $0.url.flatMap(URL.init(string:)))
+        }
+    }
+
     /// Detecta las categorías de lo que sigue el usuario y, por cada una, propone podcasts de
     /// esa categoría que aún no sigue. `country` elige la tienda (ES = español, US = inglés).
     static func discover(from podcasts: [Podcast], country: String) async -> [GenreSection] {
@@ -74,6 +85,18 @@ struct GenreSection: Identifiable {
     let genre: String
     let results: [SearchResult]
     var id: String { genre }
+}
+
+/// Formato "Podcasting 2.0" de capítulos en JSON aparte (https://podcastindex.org/namespace/1.0#chapters).
+struct ChaptersDocument: Decodable {
+    let chapters: [ChapterJSON]
+}
+
+struct ChapterJSON: Decodable {
+    let title: String
+    let startTime: TimeInterval
+    let img: String?
+    let url: String?
 }
 
 /// Respuesta de la iTunes Search API.

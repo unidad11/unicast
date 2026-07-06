@@ -223,6 +223,10 @@ struct PlayerView: View {
 struct NotesChaptersView: View {
     @Environment(AppStore.self) private var store
     let episode: Episode
+    @State private var loadedChapters: [Chapter] = []
+
+    /// Los capítulos a mostrar: los del feed si ya vinieron incrustados, o los del JSON aparte una vez descargados.
+    private var displayChapters: [Chapter] { episode.chapters.isEmpty ? loadedChapters : episode.chapters }
 
     var body: some View {
         ZStack {
@@ -247,10 +251,10 @@ struct NotesChaptersView: View {
                         Spacer()
                     }
 
-                    if !episode.chapters.isEmpty {
+                    if !displayChapters.isEmpty {
                         Text("Capítulos")
                             .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                        ForEach(episode.chapters) { chapter in
+                        ForEach(displayChapters) { chapter in
                             HStack(spacing: 10) {
                                 Group {
                                     if let url = chapter.imageURL {
@@ -266,6 +270,12 @@ struct NotesChaptersView: View {
                                         .font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
                                 }
                                 Spacer()
+                                if let link = chapter.linkURL {
+                                    Link(destination: link) {
+                                        Image(systemName: "link.circle.fill")
+                                            .foregroundStyle(Theme.accent)
+                                    }
+                                }
                             }
                         }
                     }
@@ -284,5 +294,12 @@ struct NotesChaptersView: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .task(id: episode.id) {
+            guard episode.chapters.isEmpty, let url = episode.chaptersURL else { return }
+            let chapters = await PodcastService.fetchChapters(from: url, colorHex: episode.colorHex)
+            guard !chapters.isEmpty else { return }
+            loadedChapters = chapters
+            store.setChapters(chapters, for: episode.id)
+        }
     }
 }
