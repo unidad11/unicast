@@ -10,7 +10,7 @@ struct PodcastCover: View {
     var body: some View {
         Group {
             if let url = podcast.artworkURL {
-                AsyncImage(url: url) { image in
+                CachedImage(url: url) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     colorBlock
