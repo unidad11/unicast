@@ -1,5 +1,6 @@
 import SwiftUI
 import BackgroundTasks
+import UserNotifications
 
 /// Punto de entrada de Unicast.
 @main
@@ -8,6 +9,7 @@ struct UnicastApp: App {
     @State private var audioPlayer = AudioPlayer()
     @State private var downloadManager = DownloadManager()
     @State private var colorExtractor = ColorExtractor()
+    @State private var notificationDelegate = NotificationDelegate()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -48,6 +50,10 @@ struct UnicastApp: App {
                             audioPlayer.play(ep)
                         }
                     }
+                    // Al tocar la notificación de descarga, reproduce ese episodio (como Overcast).
+                    notificationDelegate.store = store
+                    notificationDelegate.audioPlayer = audioPlayer
+                    UNUserNotificationCenter.current().delegate = notificationDelegate
                     // Permiso de notificaciones (aviso de descargas). Se omite en capturas de simulador.
                     if ProcessInfo.processInfo.environment["UNICAST_PREVIEW"] == nil {
                         Notifications.requestPermission()

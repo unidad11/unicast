@@ -38,7 +38,7 @@ final class DownloadManager {
             }
             DispatchQueue.main.async {
                 self?.downloading.remove(episode.id)
-                Notifications.notifyDownloaded(episode.title, podcast: episode.podcastTitle)
+                Notifications.notifyDownloaded(episode.id, episode.title, podcast: episode.podcastTitle)
                 completion()
             }
         }.resume()
