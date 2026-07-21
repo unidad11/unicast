@@ -4,6 +4,17 @@ extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }
 
+extension URL {
+    /// Sube http:// a https:// (iOS bloquea las conexiones sin cifrar); casi todos los
+    /// servidores de podcasts e imágenes responden igual de bien por https.
+    var securedHTTPS: URL {
+        guard scheme == "http", var components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+        else { return self }
+        components.scheme = "https"
+        return components.url ?? self
+    }
+}
+
 /// Parsea un feed RSS de podcast con `XMLParser` (de Foundation, sin dependencias externas)
 /// y devuelve un `Podcast` con sus episodios: título, autor, resumen, audio, duración,
 /// fecha, imagen y capítulos (formato Podlove Simple Chapters).
@@ -71,16 +82,16 @@ final class RSSParser: NSObject, XMLParserDelegate {
         case "enclosure":
             if let urlString = attributeDict["url"], let url = URL(string: urlString) { iAudio = url }
         case "itunes:image":
-            if let href = attributeDict["href"], let url = URL(string: href) {
+            if let href = attributeDict["href"], let url = URL(string: href)?.securedHTTPS {
                 if inItem { iImage = url } else { channelImage = url }
             }
         case "psc:chapter":
             if let start = attributeDict["start"], let title = attributeDict["title"] {
-                let image = attributeDict["image"].flatMap { URL(string: $0) }
+                let image = attributeDict["image"].flatMap { URL(string: $0)?.securedHTTPS }
                 iChapters.append(Chapter(title: title, start: timecode(start), colorHex: colorHex, imageURL: image))
             }
         case "podcast:chapters":
-            if let urlString = attributeDict["url"] { iChaptersURL = URL(string: urlString) }
+            if let urlString = attributeDict["url"] { iChaptersURL = URL(string: urlString)?.securedHTTPS }
         default:
             break
         }
@@ -120,7 +131,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
             case "description", "itunes:summary":
                 if channelSummary.isEmpty { channelSummary = value }
             case "url":
-                if inChannelImage, channelImage == nil { channelImage = URL(string: value) }
+                if inChannelImage, channelImage == nil { channelImage = URL(string: value)?.securedHTTPS }
             case "image":
                 inChannelImage = false
             default:

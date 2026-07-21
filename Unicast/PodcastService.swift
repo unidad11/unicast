@@ -28,7 +28,7 @@ enum PodcastService {
                              user: String? = nil, password: String? = nil) async -> Podcast? {
         // Algunos feeds antiguos van en http:// (iOS los bloquea por seguridad); casi todos
         // responden igual de bien por https, así que probamos esa versión primero.
-        let secureURL = upgradedToHTTPS(feedURL)
+        let secureURL = feedURL.securedHTTPS
         var request = URLRequest(url: secureURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData   // feed SIEMPRE fresco (como Overcast)
         // Podcast privado: autenticación básica (usuario y contraseña).
@@ -40,21 +40,15 @@ enum PodcastService {
         return RSSParser(feedURL: secureURL, colorHex: colorHex).parse(data: data)
     }
 
-    private static func upgradedToHTTPS(_ url: URL) -> URL {
-        guard url.scheme == "http", var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        else { return url }
-        components.scheme = "https"
-        return components.url ?? url
-    }
-
     /// Descarga y decodifica un archivo de capítulos "Podcasting 2.0" (`podcast:chapters` del RSS).
     static func fetchChapters(from url: URL, colorHex: String) async -> [Chapter] {
-        guard let (data, _) = try? await URLSession.shared.data(from: url),
+        guard let (data, _) = try? await URLSession.shared.data(from: url.securedHTTPS),
               let document = try? JSONDecoder().decode(ChaptersDocument.self, from: data)
         else { return [] }
         return document.chapters.map {
             Chapter(title: $0.title, start: $0.startTime, colorHex: colorHex,
-                    imageURL: $0.img.flatMap(URL.init(string:)), linkURL: $0.url.flatMap(URL.init(string:)))
+                    imageURL: $0.img.flatMap { URL(string: $0)?.securedHTTPS },
+                    linkURL: $0.url.flatMap(URL.init(string:)))
         }
     }
 
