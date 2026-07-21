@@ -9,6 +9,7 @@ struct DiscoverView: View {
     @State private var isLoading = true
     @State private var followed: Set<Int> = []
     @State private var language = "ES"   // ES = español, US = inglés
+    @State private var errorText: String?
 
     var body: some View {
         ZStack {
@@ -23,6 +24,12 @@ struct DiscoverView: View {
                     Text("Inglés").tag("US")
                 }
                 .pickerStyle(.segmented)
+
+                if let errorText {
+                    Text(errorText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                }
 
                 if isLoading {
                     Spacer()
@@ -118,12 +125,16 @@ struct DiscoverView: View {
 
     private func follow(_ result: SearchResult) {
         guard let feed = result.feed else { return }
-        followed.insert(result.id)
-        Task {
+        errorText = nil
+        // @MainActor: evita que este "seguir" se cruce con un refresco a la vez y el podcast se pierda.
+        Task { @MainActor in
             if let podcast = await PodcastService.fetchPodcast(
                 feedURL: feed, colorHex: colorHexFor(result.collectionName)
             ) {
                 store.subscribe(podcast, downloads: downloads)
+                followed.insert(result.id)   // solo se marca "seguido" si de verdad se guardó
+            } else {
+                errorText = "No se pudo añadir \"\(result.collectionName)\". Revisa tu conexión e inténtalo de nuevo."
             }
         }
     }

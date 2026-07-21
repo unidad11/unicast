@@ -115,7 +115,8 @@ struct AddPodcastView: View {
         importing = true
         importTotal = feeds.count
         importDone = 0
-        Task {
+        // @MainActor: evita que estas altas se crucen con un refresco a la vez y se pierda alguna.
+        Task { @MainActor in
             for feed in feeds {
                 if let podcast = await PodcastService.fetchPodcast(
                     feedURL: feed, colorHex: colorHexFor(feed.host ?? "feed")
@@ -139,7 +140,8 @@ struct AddPodcastView: View {
         }
         errorText = nil
         isAdding = true
-        Task {
+        // @MainActor: evita que esta alta se cruce con un refresco a la vez y el podcast se pierda.
+        Task { @MainActor in
             let podcast = await PodcastService.fetchPodcast(
                 feedURL: feedURL,
                 colorHex: colorHexFor(feedURL.host ?? text),

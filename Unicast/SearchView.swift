@@ -11,6 +11,7 @@ struct SearchView: View {
     @State private var followed: Set<Int> = []
     @State private var showAdd = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var errorText: String?
 
     var body: some View {
         ZStack {
@@ -22,6 +23,12 @@ struct SearchView: View {
                     .foregroundStyle(Theme.textPrimary)
 
                 searchField
+
+                if let errorText {
+                    Text(errorText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                }
 
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -153,12 +160,16 @@ struct SearchView: View {
 
     private func follow(_ result: SearchResult) {
         guard let feed = result.feed else { return }
-        followed.insert(result.id)
-        Task {
+        errorText = nil
+        // @MainActor: evita que este "seguir" se cruce con un refresco a la vez y el podcast se pierda.
+        Task { @MainActor in
             if let podcast = await PodcastService.fetchPodcast(
                 feedURL: feed, colorHex: colorHexFor(result.collectionName)
             ) {
                 store.subscribe(podcast, downloads: downloads)
+                followed.insert(result.id)   // solo se marca "seguido" si de verdad se guardó
+            } else {
+                errorText = "No se pudo añadir \"\(result.collectionName)\". Revisa tu conexión e inténtalo de nuevo."
             }
         }
     }

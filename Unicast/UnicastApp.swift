@@ -23,7 +23,8 @@ struct UnicastApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         // Al volver a la app: refresco automático (si el último tiene >5 min).
-                        Task { await store.refreshIfStale(downloads: downloadManager) }
+                        // @MainActor: evita que este refresco se cruce con un "seguir podcast" a la vez.
+                        Task { @MainActor in await store.refreshIfStale(downloads: downloadManager) }
                     } else {
                         if let episode = audioPlayer.currentEpisode {
                             let remaining = audioPlayer.duration - audioPlayer.currentTime
@@ -62,8 +63,7 @@ struct UnicastApp: App {
         }
         .backgroundTask(.appRefresh("com.jbs.Unicast.refresh")) {
             // iOS ejecuta esto en segundo plano cuando lo cree oportuno: refresca feeds y descarga.
-            await store.refresh(downloads: downloadManager)
-            scheduleRefresh()
+            await refreshInBackground()
         }
     }
 
@@ -72,5 +72,13 @@ struct UnicastApp: App {
         let request = BGAppRefreshTaskRequest(identifier: "com.jbs.Unicast.refresh")
         request.earliestBeginDate = Date(timeIntervalSinceNow: 10 * 60) // a partir de ~10 min
         try? BGTaskScheduler.shared.submit(request)
+    }
+
+    /// @MainActor: el refresco en segundo plano toca `store.podcasts` igual que "seguir un podcast";
+    /// forzarlo al hilo principal evita que ambas cosas se crucen y se pisen entre sí.
+    @MainActor
+    private func refreshInBackground() async {
+        await store.refresh(downloads: downloadManager)
+        scheduleRefresh()
     }
 }
