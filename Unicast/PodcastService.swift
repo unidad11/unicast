@@ -26,7 +26,10 @@ enum PodcastService {
     /// Descarga y parsea un feed RSS, devolviendo el podcast con sus episodios.
     static func fetchPodcast(feedURL: URL, colorHex: String = "5B5BD6",
                              user: String? = nil, password: String? = nil) async -> Podcast? {
-        var request = URLRequest(url: feedURL)
+        // Algunos feeds antiguos van en http:// (iOS los bloquea por seguridad); casi todos
+        // responden igual de bien por https, así que probamos esa versión primero.
+        let secureURL = upgradedToHTTPS(feedURL)
+        var request = URLRequest(url: secureURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData   // feed SIEMPRE fresco (como Overcast)
         // Podcast privado: autenticación básica (usuario y contraseña).
         if let user, let password, !user.isEmpty,
@@ -34,7 +37,14 @@ enum PodcastService {
             request.setValue("Basic \(credentials.base64EncodedString())", forHTTPHeaderField: "Authorization")
         }
         guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
-        return RSSParser(feedURL: feedURL, colorHex: colorHex).parse(data: data)
+        return RSSParser(feedURL: secureURL, colorHex: colorHex).parse(data: data)
+    }
+
+    private static func upgradedToHTTPS(_ url: URL) -> URL {
+        guard url.scheme == "http", var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return url }
+        components.scheme = "https"
+        return components.url ?? url
     }
 
     /// Descarga y decodifica un archivo de capítulos "Podcasting 2.0" (`podcast:chapters` del RSS).
