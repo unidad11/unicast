@@ -38,6 +38,13 @@ final class AudioPlayer {
             self.isPlaying = false
             self.onFinished?(id)
         }
+        // Llamadas, avisos de Siri, etc.: sin esto, al colgar el sistema puede darle el control
+        // a otra app (Apple Music) en vez de devolvérselo a Unicast.
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            self?.handleInterruption(notification)
+        }
     }
 
     /// Carga un episodio sin reproducir (para "recordar el último" al abrir la app).
@@ -104,6 +111,30 @@ final class AudioPlayer {
 
     private func seekPlayer(to seconds: TimeInterval) {
         player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600))
+    }
+
+    /// Al empezar la interrupción (llamada, etc.) el sistema ya pausa el audio por su cuenta;
+    /// aquí solo reflejamos ese pausado. Al terminar, si el sistema dice que es buen momento
+    /// para seguir (`.shouldResume`), Unicast recupera el control y sigue sonando solo.
+    private func handleInterruption(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue)
+        else { return }
+        switch type {
+        case .began:
+            isPlaying = false
+            updateNowPlaying()
+        case .ended:
+            let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            guard AVAudioSession.InterruptionOptions(rawValue: optionsValue).contains(.shouldResume) else { return }
+            try? AVAudioSession.sharedInstance().setActive(true)
+            player.play()
+            isPlaying = true
+            updateNowPlaying()
+        @unknown default:
+            break
+        }
     }
 
     private func addTimeObserver() {

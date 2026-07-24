@@ -26,20 +26,28 @@ final class DownloadManager {
         return (attrs?[.size] as? Int64) ?? 0
     }
 
-    /// Descarga el audio del episodio. Llama a `completion` en el hilo principal al terminar.
+    /// Descarga el audio del episodio. Llama a `completion` en el hilo principal, y SOLO si el
+    /// archivo llegó a guardarse de verdad (antes se avisaba "Descargado" y se marcaba como tal
+    /// aunque la descarga hubiera fallado, dejando el episodio en un estado mentiroso).
     func download(_ episode: Episode, completion: @escaping () -> Void) {
         guard let url = episode.audioURL, !downloading.contains(episode.id) else { return }
         downloading.insert(episode.id)
         URLSession.shared.downloadTask(with: url) { [weak self] tempURL, _, _ in
+            var success = false
             if let tempURL {
                 let destination = DownloadManager.localURL(for: episode.id)
                 try? FileManager.default.removeItem(at: destination)
-                try? FileManager.default.moveItem(at: tempURL, to: destination)
+                do {
+                    try FileManager.default.moveItem(at: tempURL, to: destination)
+                    success = true
+                } catch { success = false }
             }
             DispatchQueue.main.async {
                 self?.downloading.remove(episode.id)
-                Notifications.notifyDownloaded(episode.id, episode.title, podcast: episode.podcastTitle)
-                completion()
+                if success {
+                    Notifications.notifyDownloaded(episode.id, episode.title, podcast: episode.podcastTitle)
+                    completion()
+                }
             }
         }.resume()
     }

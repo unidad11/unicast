@@ -80,7 +80,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
         case "image" where !inItem:
             inChannelImage = true
         case "enclosure":
-            if let urlString = attributeDict["url"], let url = URL(string: urlString) { iAudio = url }
+            if let urlString = attributeDict["url"] { iAudio = URL(string: urlString)?.securedHTTPS }
         case "itunes:image":
             if let href = attributeDict["href"], let url = URL(string: href)?.securedHTTPS {
                 if inItem { iImage = url } else { channelImage = url }

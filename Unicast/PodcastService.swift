@@ -31,6 +31,9 @@ enum PodcastService {
         let secureURL = feedURL.securedHTTPS
         var request = URLRequest(url: secureURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData   // feed SIEMPRE fresco (como Overcast)
+        // Límite corto: en el refresco en segundo plano, un solo feed caído no debe comerse
+        // todo el tiempo que el sistema da (por defecto son 60s, demasiado para eso).
+        request.timeoutInterval = 20
         // Podcast privado: autenticación básica (usuario y contraseña).
         if let user, let password, !user.isEmpty,
            let credentials = "\(user):\(password)".data(using: .utf8) {

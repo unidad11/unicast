@@ -240,13 +240,13 @@ final class AppStore {
     /// Fecha del último refresco completado (para no repetirlo a cada rato al volver a la app).
     var lastRefreshAt: Date?
 
-    /// Refresca los feeds reales EN PARALELO (antes iban de uno en uno y con muchos podcasts
-    /// tardaba una eternidad): trae los episodios nuevos sin perder el estado de los que ya hay,
-    /// alimenta las listas inteligentes y aplica el auto-descargar.
+    /// Refresca los feeds reales EN PARALELO: trae los episodios nuevos sin perder el estado de
+    /// los que ya hay, alimenta las listas inteligentes y aplica el auto-descargar. Cada podcast
+    /// se procesa Y DESCARGA en cuanto responde SU feed, sin esperar a los demás — antes se
+    /// esperaba a que respondieran TODOS antes de bajar nada de ninguno, así que un solo podcast
+    /// lento o caído esa noche podía dejar sin descargar TODOS los demás en segundo plano.
     func refresh(downloads: DownloadManager) async {
-        // 1. Descargar todos los feeds a la vez.
         let current = podcasts
-        var fetched: [UUID: Podcast] = [:]
         await withTaskGroup(of: (UUID, Podcast?).self) { group in
             for podcast in current {
                 guard let feed = podcast.feedURL else { continue }
@@ -255,29 +255,36 @@ final class AppStore {
                 }
             }
             for await (id, fresh) in group {
-                if let fresh { fetched[id] = fresh }
+                guard let fresh, let index = podcasts.firstIndex(where: { $0.id == id }) else { continue }
+                merge(fresh, into: index)
+                applyAutoDownload(for: id, using: downloads)   // baja nuevos y rota el límite
             }
-        }
-        // 2. Volcar lo nuevo sin tocar el estado de lo que ya había.
-        for index in podcasts.indices {
-            guard let fresh = fetched[podcasts[index].id] else { continue }
-            var updated = podcasts[index]
-            updated.summary = fresh.summary.isEmpty ? updated.summary : fresh.summary
-            updated.artworkURL = fresh.artworkURL ?? updated.artworkURL
-            let knownTitles = Set(updated.episodes.map(\.title))
-            let newEpisodes = fresh.episodes.filter { !knownTitles.contains($0.title) }
-            updated.episodes = newEpisodes + updated.episodes   // los nuevos, primero
-            // Rellena la URL de capítulos en episodios ya existentes (podcasts dados de alta antes de este arreglo).
-            let freshByTitle = Dictionary(fresh.episodes.map { ($0.title, $0) }, uniquingKeysWith: { a, _ in a })
-            for ei in updated.episodes.indices where updated.episodes[ei].chaptersURL == nil {
-                if let match = freshByTitle[updated.episodes[ei].title] { updated.episodes[ei].chaptersURL = match.chaptersURL }
-            }
-            podcasts[index] = updated
-            addToSmartPlaylists(newEpisodes, from: updated.id)
-            applyAutoDownload(for: updated.id, using: downloads)   // baja nuevos y rota el límite
         }
         lastRefreshAt = Date()
         save()
+    }
+
+    /// Vuelca lo nuevo de `fresh` sobre el podcast ya guardado, sin tocar el estado de lo que ya
+    /// había, y repara URLs http:// antiguas en episodios ya existentes (carátula, audio y
+    /// capítulos) — iOS las bloquea desde el arreglo del feed de Emilcar/Histocast, pero los
+    /// episodios guardados antes de ese arreglo se quedaron con la URL vieja para siempre.
+    private func merge(_ fresh: Podcast, into index: Int) {
+        var updated = podcasts[index]
+        updated.summary = fresh.summary.isEmpty ? updated.summary : fresh.summary
+        updated.artworkURL = fresh.artworkURL ?? updated.artworkURL
+        let knownTitles = Set(updated.episodes.map(\.title))
+        let newEpisodes = fresh.episodes.filter { !knownTitles.contains($0.title) }
+        updated.episodes = newEpisodes + updated.episodes   // los nuevos, primero
+        let freshByTitle = Dictionary(fresh.episodes.map { ($0.title, $0) }, uniquingKeysWith: { a, _ in a })
+        for ei in updated.episodes.indices {
+            if updated.episodes[ei].chaptersURL == nil, let match = freshByTitle[updated.episodes[ei].title] {
+                updated.episodes[ei].chaptersURL = match.chaptersURL
+            }
+            updated.episodes[ei].artworkURL = updated.episodes[ei].artworkURL?.securedHTTPS
+            updated.episodes[ei].audioURL = updated.episodes[ei].audioURL?.securedHTTPS
+        }
+        podcasts[index] = updated
+        addToSmartPlaylists(newEpisodes, from: updated.id)
     }
 
     /// Refresca solo si el último refresco tiene más de 5 minutos (al volver a la app).
