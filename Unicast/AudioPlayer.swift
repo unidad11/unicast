@@ -18,8 +18,17 @@ final class AudioPlayer {
     @ObservationIgnored private var timeObserver: Any?
     /// Se llama cuando un episodio llega al final (para autoborrarlo).
     @ObservationIgnored var onFinished: ((UUID) -> Void)?
+    /// Se llama para ir guardando la posición: al pausar y cada poco mientras suena.
+    @ObservationIgnored var onPositionUpdate: ((UUID, TimeInterval) -> Void)?
     @ObservationIgnored private var artworkImage: UIImage?
     @ObservationIgnored private var lastArtworkURL: URL?
+    /// Salto pendiente hasta que el audio esté listo, y el vigía que avisa de que ya lo está.
+    @ObservationIgnored private var pendingSeek: TimeInterval?
+    @ObservationIgnored private var statusObservation: NSKeyValueObservation?
+    /// ¿Hay que empezar a sonar en cuanto termine ese salto pendiente?
+    @ObservationIgnored private var playWhenSeekCompletes = false
+    /// Última posición que se mandó guardar (para no escribir en disco a cada instante).
+    @ObservationIgnored private var lastSavedTime: TimeInterval = 0
 
     /// Imagen de la sección que suena ahora mismo (según el minuto actual), si el episodio trae capítulos con imagen.
     var currentChapterArtworkURL: URL? {
@@ -57,9 +66,11 @@ final class AudioPlayer {
         let source = DownloadManager.isDownloaded(episode.id)
             ? DownloadManager.localURL(for: episode.id) : episode.audioURL
         if let url = source {
-            player.replaceCurrentItem(with: AVPlayerItem(url: url))
-            seekPlayer(to: episode.playbackPosition)
+            let item = AVPlayerItem(url: url)
+            player.replaceCurrentItem(with: item)
+            seekWhenReady(item, to: episode.playbackPosition)
         }
+        lastSavedTime = episode.playbackPosition
         isPlaying = false
         refreshArtworkIfNeeded()
         updateNowPlaying()
@@ -77,14 +88,25 @@ final class AudioPlayer {
     func play(_ episode: Episode) {
         try? AVAudioSession.sharedInstance().setActive(true)
         if currentEpisode?.id != episode.id { prepare(episode) }
-        player.playImmediately(atRate: 1.0)   // arranca en cuanto el audio esté listo
+        // Si aún falta colocar el episodio donde se dejó, espera a ese salto para sonar: si no,
+        // se oiría un instante del principio y después el brinco.
+        if pendingSeek != nil {
+            playWhenSeekCompletes = true
+        } else {
+            player.playImmediately(atRate: 1.0)   // arranca en cuanto el audio esté listo
+        }
         isPlaying = true
         updateNowPlaying()
     }
 
     func togglePlayPause() {
         isPlaying.toggle()
-        if isPlaying { player.play() } else { player.pause() }
+        if isPlaying {
+            player.play()
+        } else {
+            player.pause()
+            savePosition()   // al pausar, apunta ya dónde se quedó
+        }
         updateNowPlaying()
     }
 
@@ -109,8 +131,59 @@ final class AudioPlayer {
         try? session.setActive(true)
     }
 
-    private func seekPlayer(to seconds: TimeInterval) {
-        player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600))
+    /// Lleva el reproductor a un segundo concreto. `precise` (sin margen de tolerancia) se usa al
+    /// retomar un episodio: con el margen por defecto iOS puede dejarlo caer unos segundos antes,
+    /// que es justo lo que se notaba en los episodios largos.
+    private func seekPlayer(to seconds: TimeInterval, precise: Bool = false, completion: (() -> Void)? = nil) {
+        let target = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
+        if precise {
+            player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                DispatchQueue.main.async { completion?() }
+            }
+        } else {
+            player.seek(to: target)
+            completion?()
+        }
+    }
+
+    /// Salta a la posición guardada, pero SOLO cuando el audio esté de verdad listo.
+    /// A un mp3 de varias horas le lleva un instante leer su índice interno; si se le pide el salto
+    /// antes de tiempo, iOS lo descarta sin avisar y el episodio arranca donde le parece.
+    private func seekWhenReady(_ item: AVPlayerItem, to seconds: TimeInterval) {
+        statusObservation?.invalidate()
+        statusObservation = nil
+        pendingSeek = nil
+        guard seconds > 0 else { return }
+        pendingSeek = seconds
+        statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            let status = item.status
+            guard status == .readyToPlay || status == .failed else { return }
+            DispatchQueue.main.async {
+                guard let self, let target = self.pendingSeek else { return }
+                self.pendingSeek = nil
+                self.statusObservation?.invalidate()
+                self.statusObservation = nil
+                // Si el archivo no se puede abrir, no dejes la app diciendo que suena.
+                guard status == .readyToPlay else {
+                    self.playWhenSeekCompletes = false
+                    self.isPlaying = false
+                    self.updateNowPlaying()
+                    return
+                }
+                self.seekPlayer(to: target, precise: true) { [weak self] in
+                    guard let self, self.playWhenSeekCompletes else { return }
+                    self.playWhenSeekCompletes = false
+                    self.player.playImmediately(atRate: 1.0)
+                }
+            }
+        }
+    }
+
+    /// Manda guardar dónde va la reproducción (la app lo escribe en disco).
+    private func savePosition() {
+        guard let id = currentEpisode?.id, currentTime > 0 else { return }
+        lastSavedTime = currentTime
+        onPositionUpdate?(id, currentTime)
     }
 
     /// Al empezar la interrupción (llamada, etc.) el sistema ya pausa el audio por su cuenta;
@@ -146,6 +219,8 @@ final class AudioPlayer {
                itemDuration.isFinite, itemDuration > 0 {
                 self.duration = itemDuration
             }
+            // Guarda la posición cada 30 s: si la app se cierra de golpe, no se pierde el sitio.
+            if self.isPlaying, abs(self.currentTime - self.lastSavedTime) >= 30 { self.savePosition() }
             self.refreshArtworkIfNeeded()
             self.updateNowPlaying()
         }
@@ -153,8 +228,18 @@ final class AudioPlayer {
 
     private func setupRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
-        center.playCommand.addTarget { [weak self] _ in self?.togglePlayPause(); return .success }
-        center.pauseCommand.addTarget { [weak self] _ in self?.togglePlayPause(); return .success }
+        // Play y pausa son órdenes concretas, no un interruptor: si ambas alternaban, unos AirPods
+        // o el coche podían mandar "play" estando ya sonando... y pausarlo.
+        center.playCommand.addTarget { [weak self] _ in
+            guard let self, !self.isPlaying else { return .success }
+            self.togglePlayPause()
+            return .success
+        }
+        center.pauseCommand.addTarget { [weak self] _ in
+            guard let self, self.isPlaying else { return .success }
+            self.togglePlayPause()
+            return .success
+        }
         center.skipForwardCommand.preferredIntervals = [30]
         center.skipForwardCommand.addTarget { [weak self] _ in self?.skip(by: 30); return .success }
         center.skipBackwardCommand.preferredIntervals = [30]

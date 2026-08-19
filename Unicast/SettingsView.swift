@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var path: [SettingsRoute] = []
+    @State private var opmlURL: URL?
 
     var body: some View {
         @Bindable var store = store
@@ -42,7 +43,13 @@ struct SettingsView: View {
 
                     Section("Tus podcasts") {
                         Label("Importar OPML", systemImage: "square.and.arrow.down")
-                        Label("Exportar OPML", systemImage: "square.and.arrow.up")
+                        if let opmlURL {
+                            ShareLink(item: opmlURL) {
+                                Label("Exportar OPML", systemImage: "square.and.arrow.up")
+                            }
+                        } else {
+                            Label("Exportar OPML", systemImage: "square.and.arrow.up")
+                        }
                     }
                     .listRowBackground(Theme.surface)
                 }
@@ -58,6 +65,7 @@ struct SettingsView: View {
                 case .storage: StorageView()
                 }
             }
+            .task { opmlURL = OPMLExporter.writeTempFile(from: store.podcasts) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) { Button("Cerrar") { dismiss() } }
             }

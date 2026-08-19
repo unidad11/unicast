@@ -5,9 +5,10 @@ import UserNotifications
 /// Punto de entrada de Unicast.
 @main
 struct UnicastApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store = AppStore.loadOrSample()
     @State private var audioPlayer = AudioPlayer()
-    @State private var downloadManager = DownloadManager()
+    @State private var downloadManager = DownloadManager.shared
     @State private var colorExtractor = ColorExtractor()
     @State private var notificationDelegate = NotificationDelegate()
     @Environment(\.scenePhase) private var scenePhase
@@ -39,8 +40,21 @@ struct UnicastApp: App {
                     }
                 }
                 .onAppear {
+                    // Conecta ya la sesión de descargas en segundo plano (por si había alguna en
+                    // marcha de la noche anterior que necesite avisar a la app de que terminó).
+                    downloadManager.attachBackgroundSession()
+                    // Rescata el audio que quede en la carpeta vieja y, después, comprueba qué
+                    // descargas se ha llevado iOS por delante (vuelve a bajar las empezadas).
+                    DownloadManager.migrateLegacyFiles()
+                    store.reconcileDownloads(using: downloadManager)
                     // Recuerda el último episodio (lo deja listo, en pausa).
                     if let episode = store.nowPlaying { audioPlayer.prepare(store.enrich(episode)) }
+                    // Guarda la posición al pausar y cada poco mientras suena. Antes solo se
+                    // guardaba al salir de la app, así que un cierre inesperado perdía el sitio.
+                    audioPlayer.onPositionUpdate = { id, time in
+                        store.updatePlaybackPosition(id, time)
+                        store.save()
+                    }
                     // Reproducción continua + autoborrado al terminar.
                     audioPlayer.onFinished = { id in
                         let next = store.nextEpisode(after: id)

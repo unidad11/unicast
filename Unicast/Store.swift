@@ -137,6 +137,36 @@ final class AppStore {
         save()
     }
 
+    /// Pone al día la marca "Descargado" con lo que hay de verdad en disco, y vuelve a bajar lo
+    /// que falte y estuviera a medio escuchar. Devuelve cuántos episodios se habían quedado sin audio.
+    ///
+    /// Hace falta porque el audio vivía en Caches, una carpeta que iOS vacía por su cuenta cuando
+    /// le falta espacio (empezando por los archivos grandes, o sea los episodios largos). El
+    /// episodio decía "Descargado" sin tener mp3, y el reproductor tiraba de streaming en silencio.
+    /// NO se toca `playbackPosition`: el episodio se retoma donde se dejó.
+    @discardableResult
+    func reconcileDownloads(using downloads: DownloadManager) -> Int {
+        var missing: [(episode: Episode, podcastID: UUID)] = []
+        for pi in podcasts.indices {
+            for ei in podcasts[pi].episodes.indices
+            where podcasts[pi].episodes[ei].isDownloaded
+                && !DownloadManager.isDownloaded(podcasts[pi].episodes[ei].id) {
+                podcasts[pi].episodes[ei].isDownloaded = false
+                missing.append((podcasts[pi].episodes[ei], podcasts[pi].id))
+            }
+        }
+        guard !missing.isEmpty else { return 0 }
+        save()
+        // Los que estaban a medio escuchar se rebajan ya, sin esperar al refresco: pueden quedar
+        // fuera de la ventana de auto-descarga y entonces no los bajaría nadie.
+        for item in missing where item.episode.playbackPosition > 0 {
+            downloads.download(item.episode) { [weak self] in
+                self?.markDownloaded(item.episode.id, in: item.podcastID)
+            }
+        }
+        return missing.count
+    }
+
     /// Deja de seguir un podcast: borra sus audios descargados (que no queden huérfanos
     /// ocupando espacio) y lo quita de la biblioteca.
     func removePodcast(_ id: UUID) {
