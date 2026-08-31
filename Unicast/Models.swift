@@ -46,8 +46,9 @@ struct Podcast: Identifiable, Hashable, Codable {
     /// Episodios descargados (pestaña "Descargados").
     var downloadedEpisodes: [Episode] { episodes.filter(\.isDownloaded) }
 
-    /// Episodios del feed que NO están descargados (pestaña "Todos").
-    var feedEpisodes: [Episode] { episodes.filter { !$0.isDownloaded } }
+    /// Todos los episodios del feed, descargados o no (pestaña "Todos"). Antes escondía los que ya
+    /// estaban descargados, así que no había forma de ver en una sola lista qué tienes y qué no.
+    var feedEpisodes: [Episode] { episodes }
 }
 
 /// Un episodio concreto de un podcast.

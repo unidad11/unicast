@@ -285,6 +285,15 @@ private struct EpisodeRow: View {
             .buttonStyle(.plain)
         } else if downloads.downloading.contains(episode.id) {
             ProgressView().tint(Theme.accent).frame(width: 33, height: 33)
+        } else if episode.isDownloaded {
+            // Ya está en el móvil: marca verde, para distinguirlo de un vistazo de los que
+            // sonarían por streaming.
+            Image(systemName: "checkmark")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 33, height: 33)
+                .background { Circle().fill(Theme.downloaded) }
+                .accessibilityLabel("Descargado")
         } else {
             Button {
                 downloads.download(episode) { store.markDownloaded(episode.id, in: podcastID) }
@@ -295,6 +304,7 @@ private struct EpisodeRow: View {
                     .background { Circle().stroke(Theme.textMuted, lineWidth: 1.5) }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Descargar episodio")
         }
     }
 }

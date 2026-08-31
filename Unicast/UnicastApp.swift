@@ -43,9 +43,16 @@ struct UnicastApp: App {
                     // Conecta ya la sesión de descargas en segundo plano (por si había alguna en
                     // marcha de la noche anterior que necesite avisar a la app de que terminó).
                     downloadManager.attachBackgroundSession()
+                    // Una descarga puede terminar con la app cerrada; entonces no hay ninguna
+                    // pantalla esperando para apuntarlo y hay que marcarlo aquí.
+                    downloadManager.onFinished = { id in
+                        store.markDownloaded(id)
+                        store.save()
+                    }
                     // Rescata el audio que quede en la carpeta vieja y, después, comprueba qué
                     // descargas se ha llevado iOS por delante (vuelve a bajar las empezadas).
                     DownloadManager.migrateLegacyFiles()
+                    DownloadManager.cleanUpInvalidFiles()   // restos de descargas fallidas
                     store.reconcileDownloads(using: downloadManager)
                     // Recuerda el último episodio (lo deja listo, en pausa).
                     if let episode = store.nowPlaying { audioPlayer.prepare(store.enrich(episode)) }

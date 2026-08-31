@@ -13,6 +13,9 @@ enum Theme {
     static let textSecondary = Color(hex: "6E6783")
     static let textMuted = Color(hex: "A39DAF")
 
+    /// Verde de "ya está en el móvil" (la marca de descargado en la lista de episodios).
+    static let downloaded = Color(hex: "2FA36B")
+
     // Superficies
     static let surface = Color.white               // tarjetas
     static let surfaceSoft = Color(hex: "F2EFF6")  // chips, fondos internos

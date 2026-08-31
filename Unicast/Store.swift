@@ -129,6 +129,14 @@ final class AppStore {
         return ordered[index + 1]
     }
 
+    /// Marca un episodio como descargado buscando por su cuenta a qué podcast pertenece. Se usa
+    /// cuando la descarga termina con la app cerrada: ahí no hay ninguna pantalla abierta que sepa
+    /// de qué podcast venía.
+    func markDownloaded(_ episodeID: UUID) {
+        guard let podcast = podcasts.first(where: { $0.episodes.contains { $0.id == episodeID } }) else { return }
+        markDownloaded(episodeID, in: podcast.id)
+    }
+
     /// Marca un episodio como descargado.
     func markDownloaded(_ episodeID: UUID, in podcastID: UUID) {
         guard let pi = podcasts.firstIndex(where: { $0.id == podcastID }),
@@ -144,18 +152,30 @@ final class AppStore {
     /// le falta espacio (empezando por los archivos grandes, o sea los episodios largos). El
     /// episodio decía "Descargado" sin tener mp3, y el reproductor tiraba de streaming en silencio.
     /// NO se toca `playbackPosition`: el episodio se retoma donde se dejó.
+    ///
+    /// También al revés: si el mp3 está en disco pero el episodio no figura como descargado, se
+    /// marca. Es la red de seguridad para las descargas que iOS termina con la app cerrada, donde
+    /// no hay nadie escuchando para apuntarlo.
     @discardableResult
     func reconcileDownloads(using downloads: DownloadManager) -> Int {
         var missing: [(episode: Episode, podcastID: UUID)] = []
+        var recovered = 0
         for pi in podcasts.indices {
-            for ei in podcasts[pi].episodes.indices
-            where podcasts[pi].episodes[ei].isDownloaded
-                && !DownloadManager.isDownloaded(podcasts[pi].episodes[ei].id) {
-                podcasts[pi].episodes[ei].isDownloaded = false
-                missing.append((podcasts[pi].episodes[ei], podcasts[pi].id))
+            for ei in podcasts[pi].episodes.indices {
+                let onDisk = DownloadManager.isDownloaded(podcasts[pi].episodes[ei].id)
+                switch (podcasts[pi].episodes[ei].isDownloaded, onDisk) {
+                case (true, false):     // decía "Descargado" pero el audio ya no está
+                    podcasts[pi].episodes[ei].isDownloaded = false
+                    missing.append((podcasts[pi].episodes[ei], podcasts[pi].id))
+                case (false, true):     // el audio está pero nadie lo marcó: descarga terminada
+                    podcasts[pi].episodes[ei].isDownloaded = true   // con la app cerrada
+                    recovered += 1
+                default:
+                    break
+                }
             }
         }
-        guard !missing.isEmpty else { return 0 }
+        guard !missing.isEmpty || recovered > 0 else { return 0 }
         save()
         // Los que estaban a medio escuchar se rebajan ya, sin esperar al refresco: pueden quedar
         // fuera de la ventana de auto-descarga y entonces no los bajaría nadie.
