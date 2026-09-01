@@ -53,6 +53,12 @@ struct UnicastApp: App {
                     // descargas se ha llevado iOS por delante (vuelve a bajar las empezadas).
                     DownloadManager.migrateLegacyFiles()
                     DownloadManager.cleanUpInvalidFiles()   // restos de descargas fallidas
+                    // Huérfanos: audio bien descargado que se quedó sin episodio porque un
+                    // refresco se cortó a mitad. Los que están descargándose AHORA se excluyen
+                    // (siguen en la lista aunque su fichero final aún no exista o esté a medias).
+                    let validIDs = Set(store.podcasts.flatMap { $0.episodes.map(\.id) })
+                        .union(downloadManager.downloading)
+                    DownloadManager.cleanUpOrphans(validEpisodeIDs: validIDs)
                     store.reconcileDownloads(using: downloadManager)
                     // Recuerda el último episodio (lo deja listo, en pausa).
                     if let episode = store.nowPlaying { audioPlayer.prepare(store.enrich(episode)) }

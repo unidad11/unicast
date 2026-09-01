@@ -136,6 +136,22 @@ final class DownloadManager: NSObject {
         }
     }
 
+    /// Borra los .mp3 en disco que no corresponden a NINGÚN episodio de la biblioteca actual:
+    /// audio que se llegó a descargar bien pero se quedó sin dueño porque el refresco que lo
+    /// disparó se cortó antes de guardar la asociación (el caso de las descargas en segundo plano
+    /// que no llegaban a terminar de fusionarse). Sin id no hay forma de saber a qué pertenecían,
+    /// así que no se pueden recuperar: solo limpiar el espacio que ocupan.
+    static func cleanUpOrphans(validEpisodeIDs: Set<UUID>) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: audioDirectory, includingPropertiesForKeys: nil)
+        else { return }
+        for file in files where file.pathExtension == "mp3" {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                  !validEpisodeIDs.contains(id) else { continue }
+            try? fm.removeItem(at: file)
+        }
+    }
+
     /// ¿El audio ya está descargado en disco? Un archivo ridículamente pequeño NO cuenta: se da
     /// por no descargado para que se vuelva a bajar en condiciones.
     static func isDownloaded(_ episodeID: UUID) -> Bool {

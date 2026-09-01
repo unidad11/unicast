@@ -304,18 +304,30 @@ final class AppStore {
     /// Se guarda tras CADA podcast que trajo cambios, no al final: si iOS corta la tarea a mitad
     /// (el límite de tiempo en segundo plano), lo ya procesado no se pierde. Antes el `save()`
     /// único al final hacía que un refresco cortado no guardara nada de nada.
+    ///
+    /// Como mucho `maxConcurrentRefreshes` feeds a la vez (antes se lanzaban TODOS de golpe): con
+    /// 25 podcasts reales, eso satura la conexión del móvil y hace más fácil que alguno agote su
+    /// timeout de 20s sin haber ni empezado a transferir datos.
+    private let maxConcurrentRefreshes = 5
+
     func refresh(downloads: DownloadManager) async {
         let current = podcasts
         await withTaskGroup(of: (UUID, FeedFetchResult).self) { group in
-            for podcast in current {
-                guard let feed = podcast.feedURL else { continue }
-                group.addTask { [colorHex = podcast.colorHex,
-                                  etag = podcast.feedETag, lastModified = podcast.feedLastModified] in
-                    (podcast.id, await PodcastService.fetchIfChanged(feedURL: feed, colorHex: colorHex,
-                                                                      etag: etag, lastModified: lastModified))
+            var queue = current.makeIterator()
+            func launchNext() {
+                while let podcast = queue.next() {
+                    guard let feed = podcast.feedURL else { continue }
+                    group.addTask { [colorHex = podcast.colorHex,
+                                      etag = podcast.feedETag, lastModified = podcast.feedLastModified] in
+                        (podcast.id, await PodcastService.fetchIfChanged(feedURL: feed, colorHex: colorHex,
+                                                                          etag: etag, lastModified: lastModified))
+                    }
+                    return
                 }
             }
+            for _ in 0..<maxConcurrentRefreshes { launchNext() }
             for await (id, result) in group {
+                launchNext()   // uno termina: entra el siguiente de la cola, manteniendo el tope
                 guard let index = podcasts.firstIndex(where: { $0.id == id }) else { continue }
                 guard case .fetched(let fresh, let etag, let lastModified) = result else { continue }
                 merge(fresh, into: index)
