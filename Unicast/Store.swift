@@ -295,19 +295,34 @@ final class AppStore {
     /// se procesa Y DESCARGA en cuanto responde SU feed, sin esperar a los demás — antes se
     /// esperaba a que respondieran TODOS antes de bajar nada de ninguno, así que un solo podcast
     /// lento o caído esa noche podía dejar sin descargar TODOS los demás en segundo plano.
+    ///
+    /// Condicional (ETag/Last-Modified): si un podcast no tiene episodios nuevos, el servidor
+    /// responde 304 sin mandar el feed — nos ahorramos bajarlo y parsearlo. Con 25 podcasts y
+    /// feeds de hasta varios MB, esto es lo que de verdad decide si el refresco cabe en los ~30
+    /// segundos que da iOS en segundo plano, no cuánto tiempo tarda cada descarga individual.
+    ///
+    /// Se guarda tras CADA podcast que trajo cambios, no al final: si iOS corta la tarea a mitad
+    /// (el límite de tiempo en segundo plano), lo ya procesado no se pierde. Antes el `save()`
+    /// único al final hacía que un refresco cortado no guardara nada de nada.
     func refresh(downloads: DownloadManager) async {
         let current = podcasts
-        await withTaskGroup(of: (UUID, Podcast?).self) { group in
+        await withTaskGroup(of: (UUID, FeedFetchResult).self) { group in
             for podcast in current {
                 guard let feed = podcast.feedURL else { continue }
-                group.addTask { [colorHex = podcast.colorHex] in
-                    (podcast.id, await PodcastService.fetchPodcast(feedURL: feed, colorHex: colorHex))
+                group.addTask { [colorHex = podcast.colorHex,
+                                  etag = podcast.feedETag, lastModified = podcast.feedLastModified] in
+                    (podcast.id, await PodcastService.fetchIfChanged(feedURL: feed, colorHex: colorHex,
+                                                                      etag: etag, lastModified: lastModified))
                 }
             }
-            for await (id, fresh) in group {
-                guard let fresh, let index = podcasts.firstIndex(where: { $0.id == id }) else { continue }
+            for await (id, result) in group {
+                guard let index = podcasts.firstIndex(where: { $0.id == id }) else { continue }
+                guard case .fetched(let fresh, let etag, let lastModified) = result else { continue }
                 merge(fresh, into: index)
+                podcasts[index].feedETag = etag
+                podcasts[index].feedLastModified = lastModified
                 applyAutoDownload(for: id, using: downloads)   // baja nuevos y rota el límite
+                save()
             }
         }
         lastRefreshAt = Date()

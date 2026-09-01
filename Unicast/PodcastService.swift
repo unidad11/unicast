@@ -26,6 +26,21 @@ enum PodcastService {
     /// Descarga y parsea un feed RSS, devolviendo el podcast con sus episodios.
     static func fetchPodcast(feedURL: URL, colorHex: String = "5B5BD6",
                              user: String? = nil, password: String? = nil) async -> Podcast? {
+        if case .fetched(let podcast, _, _) = await fetchIfChanged(feedURL: feedURL, colorHex: colorHex,
+                                                                    user: user, password: password,
+                                                                    etag: nil, lastModified: nil) {
+            return podcast
+        }
+        return nil
+    }
+
+    /// Igual que `fetchPodcast`, pero condicional: si se pasa el `etag`/`lastModified` que el
+    /// servidor dio la última vez, y el feed no ha cambiado desde entonces, responde 304 SIN
+    /// mandar el XML — nos ahorramos bajar y parsear el feed entero. Es el mismo truco que usa
+    /// Overcast para no repetir descargas cuando no hay nada nuevo (ver overcast.fm/podcasterinfo).
+    static func fetchIfChanged(feedURL: URL, colorHex: String = "5B5BD6",
+                               user: String? = nil, password: String? = nil,
+                               etag: String?, lastModified: String?) async -> FeedFetchResult {
         // Algunos feeds antiguos van en http:// (iOS los bloquea por seguridad); casi todos
         // responden igual de bien por https, así que probamos esa versión primero.
         let secureURL = feedURL.securedHTTPS
@@ -39,8 +54,16 @@ enum PodcastService {
            let credentials = "\(user):\(password)".data(using: .utf8) {
             request.setValue("Basic \(credentials.base64EncodedString())", forHTTPHeaderField: "Authorization")
         }
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
-        return RSSParser(feedURL: secureURL, colorHex: colorHex).parse(data: data)
+        if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        if let lastModified { request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since") }
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse else { return .failed }
+        if http.statusCode == 304 { return .notModified }
+        guard (200...299).contains(http.statusCode),
+              let podcast = RSSParser(feedURL: secureURL, colorHex: colorHex).parse(data: data)
+        else { return .failed }
+        return .fetched(podcast, etag: http.value(forHTTPHeaderField: "ETag"),
+                        lastModified: http.value(forHTTPHeaderField: "Last-Modified"))
     }
 
     /// Descarga y decodifica un archivo de capítulos "Podcasting 2.0" (`podcast:chapters` del RSS).
@@ -85,6 +108,13 @@ enum PodcastService {
         }
         return sections
     }
+}
+
+/// Resultado de comprobar un feed contra la copia que ya se tenía (refresco condicional).
+enum FeedFetchResult {
+    case notModified                                                  // 304: nada que hacer
+    case fetched(Podcast, etag: String?, lastModified: String?)       // hay podcast nuevo que fusionar
+    case failed                                                       // error de red, timeout, etc.
 }
 
 /// Un grupo de recomendaciones de Descubrir, bajo el nombre de su categoría.

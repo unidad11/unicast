@@ -20,12 +20,20 @@ struct Podcast: Identifiable, Hashable, Codable {
     var autoDeleteOnFinish: Bool
     var downloadFromDate: Date?   // solo se descargan episodios publicados desde el alta (no el histórico)
 
+    // Cabeceras del último refresco que SÍ trajo cambios (ETag / Last-Modified de la respuesta).
+    // Se mandan de vuelta en la siguiente petición para que el servidor pueda responder "sin
+    // cambios" (304) sin reenviar el feed entero — así un refresco no vuelve a bajar y parsear
+    // los podcasts que ya estaban al día.
+    var feedETag: String?
+    var feedLastModified: String?
+
     init(id: UUID = UUID(), title: String, author: String, summary: String = "",
          feedURL: URL? = nil, colorHex: String, artworkURL: URL? = nil,
          episodes: [Episode] = [], autoDownload: Bool = true,
          downloadLimit: DownloadLimit = .last(5), sortOrder: EpisodeSort = .newest,
          continuousDirection: PlayDirection = .posteriores, notifyNew: Bool = true,
-         autoDeleteOnFinish: Bool = true, downloadFromDate: Date? = nil) {
+         autoDeleteOnFinish: Bool = true, downloadFromDate: Date? = nil,
+         feedETag: String? = nil, feedLastModified: String? = nil) {
         self.id = id
         self.title = title
         self.author = author
@@ -41,6 +49,8 @@ struct Podcast: Identifiable, Hashable, Codable {
         self.notifyNew = notifyNew
         self.autoDeleteOnFinish = autoDeleteOnFinish
         self.downloadFromDate = downloadFromDate
+        self.feedETag = feedETag
+        self.feedLastModified = feedLastModified
     }
 
     /// Episodios descargados (pestaña "Descargados").
