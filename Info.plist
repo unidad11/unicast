@@ -11,6 +11,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.jbs.Unicast.refresh</string>
+		<string>com.jbs.Unicast.processing</string>
 	</array>
 	<key>UIAppFonts</key>
 	<array>

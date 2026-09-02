@@ -5,6 +5,16 @@ import Observation
 ///
 /// De momento guarda todo en memoria con datos de ejemplo. Cuando conectemos los feeds
 /// reales y la persistencia, solo cambiará el interior de esta clase: las vistas seguirán igual.
+/// Lo que consiguió un refresco: cuántos podcasts traían episodios nuevos, cuántos fallaron
+/// (red, timeout...) y cuántos se intentaron en total. Sirve para el registro de despertares
+/// (`WakeLog`) — sin esto no había forma de saber si un refresco en segundo plano llegó a hacer
+/// algo o si iOS lo cortó antes de tiempo.
+struct RefreshSummary {
+    let changed: Int
+    let failed: Int
+    let total: Int
+}
+
 @Observable
 final class AppStore {
     // Contenido
@@ -310,8 +320,11 @@ final class AppStore {
     /// timeout de 20s sin haber ni empezado a transferir datos.
     private let maxConcurrentRefreshes = 5
 
-    func refresh(downloads: DownloadManager) async {
+    @discardableResult
+    func refresh(downloads: DownloadManager) async -> RefreshSummary {
         let current = podcasts
+        var changed = 0
+        var failed = 0
         await withTaskGroup(of: (UUID, FeedFetchResult).self) { group in
             var queue = current.makeIterator()
             func launchNext() {
@@ -328,8 +341,10 @@ final class AppStore {
             for _ in 0..<maxConcurrentRefreshes { launchNext() }
             for await (id, result) in group {
                 launchNext()   // uno termina: entra el siguiente de la cola, manteniendo el tope
+                if case .failed = result { failed += 1 }
                 guard let index = podcasts.firstIndex(where: { $0.id == id }) else { continue }
                 guard case .fetched(let fresh, let etag, let lastModified) = result else { continue }
+                changed += 1
                 merge(fresh, into: index)
                 podcasts[index].feedETag = etag
                 podcasts[index].feedLastModified = lastModified
@@ -339,6 +354,7 @@ final class AppStore {
         }
         lastRefreshAt = Date()
         save()
+        return RefreshSummary(changed: changed, failed: failed, total: current.count)
     }
 
     /// Vuelca lo nuevo de `fresh` sobre el podcast ya guardado, sin tocar el estado de lo que ya
@@ -365,9 +381,10 @@ final class AppStore {
     }
 
     /// Refresca solo si el último refresco tiene más de 5 minutos (al volver a la app).
-    func refreshIfStale(downloads: DownloadManager) async {
-        guard Date().timeIntervalSince(lastRefreshAt ?? .distantPast) > 5 * 60 else { return }
-        await refresh(downloads: downloads)
+    @discardableResult
+    func refreshIfStale(downloads: DownloadManager) async -> RefreshSummary? {
+        guard Date().timeIntervalSince(lastRefreshAt ?? .distantPast) > 5 * 60 else { return nil }
+        return await refresh(downloads: downloads)
     }
 
     /// Mete los episodios nuevos en las listas inteligentes que siguen a ese podcast

@@ -13,6 +13,23 @@ struct UnicastApp: App {
     @State private var notificationDelegate = NotificationDelegate()
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        // BGProcessingTask no tiene atajo en SwiftUI (`.backgroundTask` solo cubre refresco y
+        // sesiones URL), así que su handler vive en AppDelegate — sin @Environment ahí, se le
+        // pasa el trabajo por esta closure. `store`/`downloadManager` ya están inicializados en
+        // este punto (son @State con valor por defecto): se captura la MISMA instancia que usará
+        // el resto de la app, nunca una copia nueva.
+        let store = store
+        let downloadManager = downloadManager
+        AppDelegate.onProcessingTask = {
+            let start = Date()
+            let summary = await store.refresh(downloads: downloadManager)
+            WakeLog.record(WakeEvent(date: start, trigger: .processing,
+                                      podcastsChanged: summary.changed, podcastsFailed: summary.failed,
+                                      durationSeconds: Date().timeIntervalSince(start)))
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -25,7 +42,13 @@ struct UnicastApp: App {
                     if phase == .active {
                         // Al volver a la app: refresco automático (si el último tiene >5 min).
                         // @MainActor: evita que este refresco se cruce con un "seguir podcast" a la vez.
-                        Task { @MainActor in await store.refreshIfStale(downloads: downloadManager) }
+                        Task { @MainActor in
+                            let start = Date()
+                            guard let summary = await store.refreshIfStale(downloads: downloadManager) else { return }
+                            WakeLog.record(WakeEvent(date: start, trigger: .foreground,
+                                                      podcastsChanged: summary.changed, podcastsFailed: summary.failed,
+                                                      durationSeconds: Date().timeIntervalSince(start)))
+                        }
                     } else {
                         if let episode = audioPlayer.currentEpisode {
                             let remaining = audioPlayer.duration - audioPlayer.currentTime
@@ -36,7 +59,12 @@ struct UnicastApp: App {
                             }
                         }
                         store.save()
-                        scheduleRefresh()   // deja programado un refresco en segundo plano
+                        // Dos vías de refresco en segundo plano, no una: `scheduleRefresh` es la
+                        // ventana corta (~30s) de siempre; `scheduleProcessing` es más larga pero
+                        // iOS tiende a reservarla para cuando el móvil está quieto. Ninguna de las
+                        // dos tiene hora garantizada — solo son dos oportunidades en vez de una.
+                        scheduleRefresh()
+                        scheduleProcessing()
                     }
                 }
                 .onAppear {
@@ -90,22 +118,37 @@ struct UnicastApp: App {
         }
         .backgroundTask(.appRefresh("com.jbs.Unicast.refresh")) {
             // iOS ejecuta esto en segundo plano cuando lo cree oportuno: refresca feeds y descarga.
-            await refreshInBackground()
+            await refreshInBackground(trigger: .appRefresh)
         }
     }
 
-    /// Programa un refresco en segundo plano (iOS decide el momento exacto, best-effort).
+    /// Programa un refresco corto en segundo plano (iOS decide el momento exacto, best-effort).
     private func scheduleRefresh() {
         let request = BGAppRefreshTaskRequest(identifier: "com.jbs.Unicast.refresh")
         request.earliestBeginDate = Date(timeIntervalSinceNow: 10 * 60) // a partir de ~10 min
         try? BGTaskScheduler.shared.submit(request)
     }
 
+    /// Programa la vía más larga (BGProcessingTask): iOS la ejecuta con menos prisa, típicamente
+    /// cuando detecta el dispositivo ocioso, así que le pedimos solo red — no batería ni carga,
+    /// para no reducir encima las oportunidades de que llegue a ejecutarse.
+    private func scheduleProcessing() {
+        let request = BGProcessingTaskRequest(identifier: "com.jbs.Unicast.processing")
+        request.requiresNetworkConnectivity = true
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
     /// @MainActor: el refresco en segundo plano toca `store.podcasts` igual que "seguir un podcast";
     /// forzarlo al hilo principal evita que ambas cosas se crucen y se pisen entre sí.
     @MainActor
-    private func refreshInBackground() async {
-        await store.refresh(downloads: downloadManager)
+    private func refreshInBackground(trigger: WakeEvent.Trigger) async {
+        let start = Date()
+        let summary = await store.refresh(downloads: downloadManager)
+        WakeLog.record(WakeEvent(date: start, trigger: trigger,
+                                  podcastsChanged: summary.changed, podcastsFailed: summary.failed,
+                                  durationSeconds: Date().timeIntervalSince(start)))
         scheduleRefresh()
+        scheduleProcessing()
     }
 }
