@@ -39,6 +39,35 @@ struct PodcastCover: View {
     }
 }
 
+/// Portada cuadrada de un episodio (para filas dentro de listas). Usa la imagen real del
+/// episodio, o si no tiene, la de su podcast; si no hay ninguna, el color de respaldo.
+struct EpisodeCover: View {
+    @Environment(AppStore.self) private var store
+    let episode: Episode
+    var size: CGFloat = 38
+    var cornerRadius: CGFloat = 8
+
+    private var artworkURL: URL? {
+        episode.artworkURL ?? store.podcasts.first(where: { $0.title == episode.podcastTitle })?.artworkURL
+    }
+
+    var body: some View {
+        Group {
+            if let url = artworkURL {
+                CachedImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Color(hex: episode.colorHex)
+                }
+            } else {
+                Color(hex: episode.colorHex)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+}
+
 /// Mini-reproductor: barra morada flotante con lo que suena.
 struct MiniPlayer: View {
     @Environment(AppStore.self) private var store

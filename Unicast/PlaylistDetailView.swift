@@ -71,9 +71,7 @@ private struct PlaylistEpisodeRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(hex: episode.colorHex))
-                .frame(width: 38, height: 38)
+            EpisodeCover(episode: episode)
             VStack(alignment: .leading, spacing: 2) {
                 Text(episode.title)
                     .font(.system(size: 12, weight: .semibold))

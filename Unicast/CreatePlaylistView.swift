@@ -86,8 +86,7 @@ struct CreatePlaylistView: View {
 
     private func episodeRow(_ episode: Episode) -> some View {
         HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color(hex: episode.colorHex)).frame(width: 34, height: 34)
+            EpisodeCover(episode: episode, size: 34, cornerRadius: 7)
             VStack(alignment: .leading, spacing: 1) {
                 Text(episode.title).font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary).lineLimit(1)
