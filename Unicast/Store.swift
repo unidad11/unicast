@@ -212,6 +212,7 @@ final class AppStore {
     func createPlaylist(name: String, episodeIDs: [UUID]) -> UUID {
         let playlist = Playlist(name: name.isEmpty ? "Nueva lista" : name, episodeIDs: episodeIDs)
         playlists.append(playlist)
+        save()
         return playlist.id
     }
 
@@ -228,6 +229,7 @@ final class AppStore {
         }
         playlists[index].isSmart = true
         playlists[index].sourcePodcastOrder = order
+        save()
     }
 
     /// Sigue un podcast (lo añade a la biblioteca) si no estaba ya.
@@ -414,6 +416,7 @@ final class AppStore {
     func movePlaylistItems(_ playlistID: UUID, from source: IndexSet, to destination: Int) {
         guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[index].episodeIDs.move(fromOffsets: source, toOffset: destination)
+        save()
     }
 
     /// Crea un `AppStore` ya poblado con datos de ejemplo (para ver la interfaz).

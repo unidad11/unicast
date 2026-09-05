@@ -3,6 +3,7 @@ import SwiftUI
 /// Índice de listas de reproducción. Las inteligentes se marcan con un rayo.
 struct PlaylistsView: View {
     @Environment(AppStore.self) private var store
+    @Environment(DownloadManager.self) private var downloads
     @State private var path: [Playlist] = []
     @State private var showCreate = false
 
@@ -38,6 +39,7 @@ struct PlaylistsView: View {
                     }
                     .padding(16)
                 }
+                .refreshable { await store.refresh(downloads: downloads) }
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: Playlist.self) { playlist in
                     PlaylistDetailView(playlist: playlist)

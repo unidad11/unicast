@@ -10,7 +10,8 @@ struct CreatePlaylistView: View {
     @State private var selected: Set<UUID> = []
     @State private var showSmartPrompt = false
 
-    private var allEpisodes: [Episode] { store.podcasts.flatMap(\.episodes) }
+    private var allEpisodes: [Episode] { store.podcasts.flatMap(\.downloadedEpisodes) }
+    private var podcastsWithDownloads: [Podcast] { store.podcasts.filter { !$0.downloadedEpisodes.isEmpty } }
     private var chosen: [Episode] { allEpisodes.filter { selected.contains($0.id) } }
     private var sourceNames: [String] {
         var names: [String] = []
@@ -34,13 +35,24 @@ struct CreatePlaylistView: View {
                     }
                     .listRowBackground(Theme.surface)
 
-                    Section("Añade episodios") {
-                        ForEach(allEpisodes) { episode in
-                            Button { toggle(episode.id) } label: { episodeRow(episode) }
-                                .buttonStyle(.plain)
+                    if podcastsWithDownloads.isEmpty {
+                        Section("Añade episodios") {
+                            Text("No tienes episodios descargados todavía.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.textMuted)
+                        }
+                        .listRowBackground(Theme.surface)
+                    } else {
+                        ForEach(podcastsWithDownloads) { podcast in
+                            Section(podcast.title) {
+                                ForEach(podcast.downloadedEpisodes) { episode in
+                                    Button { toggle(episode.id) } label: { episodeRow(episode) }
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                            .listRowBackground(Theme.surface)
                         }
                     }
-                    .listRowBackground(Theme.surface)
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
@@ -66,7 +78,7 @@ struct CreatePlaylistView: View {
         .onAppear {
             if ProcessInfo.processInfo.environment["UNICAST_PREVIEW"] == "createSmart" {
                 name = "Para el coche"
-                selected = Set(store.podcasts.prefix(3).compactMap { $0.episodes.first?.id })
+                selected = Set(store.podcasts.prefix(3).compactMap { $0.downloadedEpisodes.first?.id })
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSmartPrompt = true }
             }
         }
