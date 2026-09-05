@@ -232,6 +232,35 @@ final class AppStore {
         save()
     }
 
+    /// Cambia el nombre de una lista.
+    func renamePlaylist(_ playlistID: UUID, name: String) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistID }),
+              !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        playlists[index].name = name
+        save()
+    }
+
+    /// Quita un episodio de una lista (no borra el episodio de su podcast, solo sale de esta lista).
+    func removeEpisodeFromPlaylist(_ episodeID: UUID, playlistID: UUID) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        playlists[index].episodeIDs.removeAll { $0 == episodeID }
+        save()
+    }
+
+    /// Añade un podcast como fuente de una lista inteligente y mete ya sus descargados actuales
+    /// (si no, habría que esperar a que publicara algo nuevo para ver el primer episodio).
+    func addSourcePodcast(_ podcastID: UUID, to playlistID: UUID) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistID }),
+              let podcast = podcast(id: podcastID) else { return }
+        if !playlists[index].sourcePodcastOrder.contains(podcastID) {
+            playlists[index].sourcePodcastOrder.append(podcastID)
+        }
+        let already = Set(playlists[index].episodeIDs)
+        let newIDs = podcast.downloadedEpisodes.map(\.id).filter { !already.contains($0) }
+        playlists[index].episodeIDs.append(contentsOf: newIDs)
+        save()
+    }
+
     /// Sigue un podcast (lo añade a la biblioteca) si no estaba ya.
     func subscribe(_ podcast: Podcast, downloads: DownloadManager) {
         guard !podcasts.contains(where: { $0.title == podcast.title }) else { return }
