@@ -297,7 +297,11 @@ final class AppStore {
         }
         let keep = Array(eligible.prefix(target))
         let keepIDs = Set(keep.map(\.id))
-        for ep in keep where !ep.isDownloaded && !ep.isPlayed {
+        // También se pregunta al disco, no solo al flag en memoria: si `onFinished` no llegó a
+        // marcar una descarga de la noche (el caso que arregla el bug de arriba, en versiones
+        // futuras si volviera a colarse uno parecido), sin este chequeo se re-descargaría el
+        // mismo mp3 entero en cada refresco, varias veces al día.
+        for ep in keep where !ep.isDownloaded && !ep.isPlayed && !DownloadManager.isDownloaded(ep.id) {
             downloads.download(ep) { [weak self] in self?.markDownloaded(ep.id, in: podcastID) }
         }
         // Rotación: borrar los descargados que ya no entran (sin empezar a escuchar).
@@ -351,16 +355,28 @@ final class AppStore {
     /// timeout de 20s sin haber ni empezado a transferir datos.
     private let maxConcurrentRefreshes = 5
 
+    /// Punto de partida del último refresco (índice sobre el orden actual de `podcasts`), para
+    /// rotar por dónde se empieza. Medido: un refresco en segundo plano tarda de media 33s, por
+    /// ENCIMA de los ~30s que suele dar iOS — si siempre se empezara por el primero, los últimos
+    /// podcasts de la biblioteca casi nunca llegarían a refrescarse en segundo plano. Se guarda en
+    /// UserDefaults, no en el JSON de la biblioteca: es un dato de "por dónde voy", no de contenido.
+    private static let rotationKey = "unicast.refresh.rotationIndex"
+
     @discardableResult
     func refresh(downloads: DownloadManager) async -> RefreshSummary {
-        let current = podcasts
+        let all = podcasts
+        guard !all.isEmpty else { return RefreshSummary(changed: 0, failed: 0, total: 0) }
+        let start = UserDefaults.standard.integer(forKey: Self.rotationKey) % all.count
+        let current = Array(all[start...] + all[..<start])
         var changed = 0
         var failed = 0
+        var launched = 0
         await withTaskGroup(of: (UUID, FeedFetchResult).self) { group in
             var queue = current.makeIterator()
             func launchNext() {
                 while let podcast = queue.next() {
                     guard let feed = podcast.feedURL else { continue }
+                    launched += 1
                     group.addTask { [colorHex = podcast.colorHex,
                                       etag = podcast.feedETag, lastModified = podcast.feedLastModified] in
                         (podcast.id, await PodcastService.fetchIfChanged(feedURL: feed, colorHex: colorHex,
@@ -383,6 +399,9 @@ final class AppStore {
                 save()
             }
         }
+        // La próxima vez se empieza justo donde se quedó esta — si iOS cortó la tarea a mitad,
+        // los que no llegaron a lanzarse son los primeros candidatos del siguiente refresco.
+        UserDefaults.standard.set((start + launched) % all.count, forKey: Self.rotationKey)
         lastRefreshAt = Date()
         save()
         return RefreshSummary(changed: changed, failed: failed, total: current.count)

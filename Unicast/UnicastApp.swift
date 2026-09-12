@@ -28,6 +28,18 @@ struct UnicastApp: App {
                                       podcastsChanged: summary.changed, podcastsFailed: summary.failed,
                                       durationSeconds: Date().timeIntervalSince(start)))
         }
+        // Estas tres tienen que estar listas ANTES de que iOS pueda despertar la app en segundo
+        // plano puro (sin montar ninguna pantalla) — por eso van aquí y no en `.onAppear`, que NO
+        // se ejecuta en ese caso. Antes vivían en `.onAppear` y esa era la fuga real: una descarga
+        // que terminaba de madrugada se guardaba bien en disco pero nunca se marcaba como
+        // descargada, así que el siguiente refresco la volvía a bajar ENTERA — y así una y otra
+        // vez, varias veces al día, hasta que el usuario abría la app a mano y `.onAppear` corría.
+        downloadManager.attachBackgroundSession()
+        downloadManager.onFinished = { id in
+            store.markDownloaded(id)
+            store.save()
+        }
+        store.reconcileDownloads(using: downloadManager)
     }
 
     var body: some Scene {
@@ -68,17 +80,10 @@ struct UnicastApp: App {
                     }
                 }
                 .onAppear {
-                    // Conecta ya la sesión de descargas en segundo plano (por si había alguna en
-                    // marcha de la noche anterior que necesite avisar a la app de que terminó).
-                    downloadManager.attachBackgroundSession()
-                    // Una descarga puede terminar con la app cerrada; entonces no hay ninguna
-                    // pantalla esperando para apuntarlo y hay que marcarlo aquí.
-                    downloadManager.onFinished = { id in
-                        store.markDownloaded(id)
-                        store.save()
-                    }
-                    // Rescata el audio que quede en la carpeta vieja y, después, comprueba qué
-                    // descargas se ha llevado iOS por delante (vuelve a bajar las empezadas).
+                    // Rescata el audio que quede en la carpeta vieja y, después, limpia lo que ya
+                    // no tiene sentido en disco. `attachBackgroundSession`, `onFinished` y
+                    // `reconcileDownloads` van en el `init()` (ver arriba): esto de aquí puede
+                    // esperar a que el usuario abra la app de verdad.
                     DownloadManager.migrateLegacyFiles()
                     DownloadManager.cleanUpInvalidFiles()   // restos de descargas fallidas
                     // Huérfanos: audio bien descargado que se quedó sin episodio porque un
@@ -87,7 +92,6 @@ struct UnicastApp: App {
                     let validIDs = Set(store.podcasts.flatMap { $0.episodes.map(\.id) })
                         .union(downloadManager.downloading)
                     DownloadManager.cleanUpOrphans(validEpisodeIDs: validIDs)
-                    store.reconcileDownloads(using: downloadManager)
                     // Recuerda el último episodio (lo deja listo, en pausa).
                     if let episode = store.nowPlaying { audioPlayer.prepare(store.enrich(episode)) }
                     // Guarda la posición al pausar y cada poco mientras suena. Antes solo se
