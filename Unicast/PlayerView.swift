@@ -82,6 +82,17 @@ struct PlayerView: View {
         .foregroundStyle(Theme.textSecondary)
     }
 
+    /// Lado de la portada: casi todo el ancho de pantalla (antes eran 260pt fijos, se quedaba
+    /// pequeña en los iPhone actuales). Con tope para no crecer de más en pantallas grandes, y
+    /// limitada también por el alto disponible para no aplastar info/progreso/controles en las
+    /// pantallas pequeñas (p.ej. iPhone SE).
+    private var coverSize: CGFloat {
+        let bounds = UIScreen.main.bounds
+        let byWidth = bounds.width - 48   // el padding horizontal de la pantalla (24 a cada lado)
+        let byHeight = bounds.height * 0.42
+        return min(byWidth, byHeight, 360)
+    }
+
     private func cover(_ ep: Episode) -> some View {
         Group {
             if let url = audio.currentChapterArtworkURL ?? ep.artworkURL ?? podcastArtwork(for: ep) {
@@ -92,7 +103,7 @@ struct PlayerView: View {
                 colorCover(ep)
             }
         }
-        .frame(width: 260, height: 260)
+        .frame(width: coverSize, height: coverSize)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: Color(hex: ep.colorHex).opacity(0.45), radius: 28, x: 0, y: 16)
         .scaleEffect(appeared ? 1 : 0.7)

@@ -96,6 +96,11 @@ struct UnicastApp: App {
                         store.updatePlaybackPosition(id, time)
                         store.save()
                     }
+                    // El reproductor pide los capítulos (JSON aparte) en cuanto prepara el episodio;
+                    // aquí se guardan para no volver a descargarlos la próxima vez.
+                    audioPlayer.onChaptersLoaded = { id, chapters in
+                        store.setChapters(chapters, for: id)
+                    }
                     // Reproducción continua + autoborrado al terminar.
                     audioPlayer.onFinished = { id in
                         let next = store.nextEpisode(after: id)

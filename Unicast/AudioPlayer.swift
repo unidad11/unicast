@@ -20,7 +20,13 @@ final class AudioPlayer {
     @ObservationIgnored var onFinished: ((UUID) -> Void)?
     /// Se llama para ir guardando la posición: al pausar y cada poco mientras suena.
     @ObservationIgnored var onPositionUpdate: ((UUID, TimeInterval) -> Void)?
+    /// Se llama cuando se han descargado los capítulos de un episodio, para que se guarden en disco.
+    @ObservationIgnored var onChaptersLoaded: ((UUID, [Chapter]) -> Void)?
     @ObservationIgnored private var artworkImage: UIImage?
+    /// El objeto de portada ya construido para el Now Playing (pantalla de bloqueo / isla): se crea
+    /// una sola vez por imagen, no en cada actualización (cada medio segundo), para que un cambio
+    /// de imagen entre capítulos se vea limpio en vez de reconstruirse sin necesidad.
+    @ObservationIgnored private var nowPlayingArtwork: MPMediaItemArtwork?
     @ObservationIgnored private var lastArtworkURL: URL?
     /// Salto pendiente hasta que el audio esté listo, y el vigía que avisa de que ya lo está.
     @ObservationIgnored private var pendingSeek: TimeInterval?
@@ -74,6 +80,7 @@ final class AudioPlayer {
         isPlaying = false
         refreshArtworkIfNeeded()
         updateNowPlaying()
+        loadChaptersIfNeeded()
     }
 
     /// Actualiza los capítulos del episodio en curso (p.ej. tras descargarlos del JSON aparte)
@@ -82,6 +89,24 @@ final class AudioPlayer {
         guard currentEpisode?.id == episodeID else { return }
         currentEpisode?.chapters = chapters
         refreshArtworkIfNeeded()
+    }
+
+    /// Si el episodio trae capítulos en un JSON aparte (Podcasting 2.0) que aún no se han pedido,
+    /// los descarga ya al prepararlo. Antes solo se pedían al abrir la hoja de "Capítulos", así que
+    /// hasta que el usuario la abría, la portada (también la del Now Playing: pantalla de bloqueo
+    /// e isla) se quedaba siempre con el logo del podcast en vez de la imagen de cada sección.
+    private func loadChaptersIfNeeded() {
+        guard let episode = currentEpisode, episode.chapters.isEmpty, let url = episode.chaptersURL else { return }
+        let episodeID = episode.id
+        let colorHex = episode.colorHex
+        Task { [weak self] in
+            let chapters = await PodcastService.fetchChapters(from: url, colorHex: colorHex)
+            guard !chapters.isEmpty else { return }
+            await MainActor.run {
+                self?.onChaptersLoaded?(episodeID, chapters)
+                self?.updateChapters(chapters, for: episodeID)
+            }
+        }
     }
 
     /// Reproduce un episodio (desde donde se quedó).
@@ -258,16 +283,21 @@ final class AudioPlayer {
         loadArtwork(target)
     }
 
-    /// Descarga la carátula y refresca la info de la pantalla de bloqueo / isla.
+    /// Descarga la carátula (pasando por la caché de disco compartida, para no repetir la
+    /// petición si ya se había visto esa imagen antes) y refresca la info de la pantalla de
+    /// bloqueo / isla.
     private func loadArtwork(_ url: URL?) {
         artworkImage = nil
-        guard let url else { return }
+        nowPlayingArtwork = nil
+        guard let url else { updateNowPlaying(); return }
         Task { [weak self] in
-            guard let (data, _) = try? await URLSession.shared.data(from: url),
-                  let image = UIImage(data: data) else { return }
+            guard let image = await ImageCache.shared.image(for: url) else { return }
             await MainActor.run {
-                self?.artworkImage = image
-                self?.updateNowPlaying()
+                // Si mientras bajaba ya tocaba mostrar otra imagen (cambio de capítulo), se descarta.
+                guard let self, self.lastArtworkURL == url else { return }
+                self.artworkImage = image
+                self.nowPlayingArtwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                self.updateNowPlaying()
             }
         }
     }
@@ -282,8 +312,8 @@ final class AudioPlayer {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
         info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
-        if let image = artworkImage {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        if let artwork = nowPlayingArtwork {
+            info[MPMediaItemPropertyArtwork] = artwork
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
