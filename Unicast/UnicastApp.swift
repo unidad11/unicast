@@ -26,7 +26,9 @@ struct UnicastApp: App {
             let summary = await store.refresh(downloads: downloadManager)
             WakeLog.record(WakeEvent(date: start, trigger: .processing,
                                       podcastsChanged: summary.changed, podcastsFailed: summary.failed,
-                                      durationSeconds: Date().timeIntervalSince(start)))
+                                      durationSeconds: Date().timeIntervalSince(start),
+                                      networkSeconds: summary.networkSeconds,
+                                      fastestDetectionSeconds: summary.fastestDetectionSeconds))
         }
         // Estas tres tienen que estar listas ANTES de que iOS pueda despertar la app en segundo
         // plano puro (sin montar ninguna pantalla) — por eso van aquí y no en `.onAppear`, que NO
@@ -59,7 +61,9 @@ struct UnicastApp: App {
                             guard let summary = await store.refreshIfStale(downloads: downloadManager) else { return }
                             WakeLog.record(WakeEvent(date: start, trigger: .foreground,
                                                       podcastsChanged: summary.changed, podcastsFailed: summary.failed,
-                                                      durationSeconds: Date().timeIntervalSince(start)))
+                                                      durationSeconds: Date().timeIntervalSince(start),
+                                                      networkSeconds: summary.networkSeconds,
+                                                      fastestDetectionSeconds: summary.fastestDetectionSeconds))
                         }
                     } else {
                         if let episode = audioPlayer.currentEpisode {
@@ -156,7 +160,9 @@ struct UnicastApp: App {
         let summary = await store.refresh(downloads: downloadManager)
         WakeLog.record(WakeEvent(date: start, trigger: trigger,
                                   podcastsChanged: summary.changed, podcastsFailed: summary.failed,
-                                  durationSeconds: Date().timeIntervalSince(start)))
+                                  durationSeconds: Date().timeIntervalSince(start),
+                                  networkSeconds: summary.networkSeconds,
+                                  fastestDetectionSeconds: summary.fastestDetectionSeconds))
         scheduleRefresh()
         scheduleProcessing()
     }

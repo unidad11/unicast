@@ -49,8 +49,18 @@ final class DownloadManager: NSObject {
     @ObservationIgnored
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.backgroundSessionIdentifier)
-        config.isDiscretionary = false       // que empiece ya, no cuando iOS lo vea oportuno
+        // OJO: esto NO hace que las descargas en segundo plano empiecen antes. Apple lo dice sin
+        // ambigüedad: "For transfers started while your app is in the background, the system
+        // always starts transfers at its discretion (...) and ignores any value you specified."
+        // Solo tiene efecto en las descargas que arrancan con la app ABIERTA (botón de descargar
+        // a mano), que es donde de verdad sirve de algo dejarlo en false.
+        config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
+        // Por defecto iOS da 7 DÍAS para completar una transferencia en segundo plano: una
+        // descarga atascada (servidor caído, feed que dejó de existir) se queda "descargando"
+        // toda una semana en vez de fallar pronto. Con esto falla en 48h, `downloading` se limpia
+        // en `didCompleteWithError`, y el episodio se reintenta solo en el siguiente refresco.
+        config.timeoutIntervalForResource = 48 * 60 * 60
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 

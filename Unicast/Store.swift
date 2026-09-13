@@ -13,6 +13,8 @@ struct RefreshSummary {
     let changed: Int
     let failed: Int
     let total: Int
+    let networkSeconds: Double
+    let fastestDetectionSeconds: Double?
 }
 
 @Observable
@@ -362,16 +364,28 @@ final class AppStore {
     /// UserDefaults, no en el JSON de la biblioteca: es un dato de "por dónde voy", no de contenido.
     private static let rotationKey = "unicast.refresh.rotationIndex"
 
+    /// Como mucho un guardado cada `saveThrottle` segundos durante el refresco (antes era uno por
+    /// CADA podcast cambiado: hasta 25 reescrituras completas del JSON de 11 MB en la misma
+    /// ventana de ~30s). El guardado final de después del bucle sigue garantizado pase lo que
+    /// pase, así que lo peor que se pierde si iOS corta a mitad son estos pocos segundos — y la
+    /// rotación de arriba ya hace que el siguiente refresco retome justo donde se quedó este.
+    private let saveThrottle: TimeInterval = 3
+
     @discardableResult
     func refresh(downloads: DownloadManager) async -> RefreshSummary {
         let all = podcasts
-        guard !all.isEmpty else { return RefreshSummary(changed: 0, failed: 0, total: 0) }
+        guard !all.isEmpty else {
+            return RefreshSummary(changed: 0, failed: 0, total: 0, networkSeconds: 0, fastestDetectionSeconds: nil)
+        }
         let start = UserDefaults.standard.integer(forKey: Self.rotationKey) % all.count
         let current = Array(all[start...] + all[..<start])
         var changed = 0
         var failed = 0
         var launched = 0
-        await withTaskGroup(of: (UUID, FeedFetchResult).self) { group in
+        var networkSeconds: Double = 0
+        var fastestDetectionSeconds: Double?
+        var lastSaveAt = Date.distantPast
+        await withTaskGroup(of: (UUID, FeedFetchResult, Double).self) { group in
             var queue = current.makeIterator()
             func launchNext() {
                 while let podcast = queue.next() {
@@ -379,24 +393,36 @@ final class AppStore {
                     launched += 1
                     group.addTask { [colorHex = podcast.colorHex,
                                       etag = podcast.feedETag, lastModified = podcast.feedLastModified] in
-                        (podcast.id, await PodcastService.fetchIfChanged(feedURL: feed, colorHex: colorHex,
-                                                                          etag: etag, lastModified: lastModified))
+                        let netStart = Date()
+                        let result = await PodcastService.fetchIfChanged(feedURL: feed, colorHex: colorHex,
+                                                                           etag: etag, lastModified: lastModified)
+                        return (podcast.id, result, Date().timeIntervalSince(netStart))
                     }
                     return
                 }
             }
             for _ in 0..<maxConcurrentRefreshes { launchNext() }
-            for await (id, result) in group {
+            for await (id, result, netTime) in group {
                 launchNext()   // uno termina: entra el siguiente de la cola, manteniendo el tope
+                networkSeconds += netTime
                 if case .failed = result { failed += 1 }
                 guard let index = podcasts.firstIndex(where: { $0.id == id }) else { continue }
                 guard case .fetched(let fresh, let etag, let lastModified) = result else { continue }
                 changed += 1
-                merge(fresh, into: index)
+                let newEpisodes = merge(fresh, into: index)
+                for episode in newEpisodes {
+                    let detection = Date().timeIntervalSince(episode.publishedAt)
+                    if fastestDetectionSeconds == nil || detection < fastestDetectionSeconds! {
+                        fastestDetectionSeconds = detection
+                    }
+                }
                 podcasts[index].feedETag = etag
                 podcasts[index].feedLastModified = lastModified
                 applyAutoDownload(for: id, using: downloads)   // baja nuevos y rota el límite
-                save()
+                if Date().timeIntervalSince(lastSaveAt) >= saveThrottle {
+                    save()
+                    lastSaveAt = Date()
+                }
             }
         }
         // La próxima vez se empieza justo donde se quedó esta — si iOS cortó la tarea a mitad,
@@ -404,14 +430,17 @@ final class AppStore {
         UserDefaults.standard.set((start + launched) % all.count, forKey: Self.rotationKey)
         lastRefreshAt = Date()
         save()
-        return RefreshSummary(changed: changed, failed: failed, total: current.count)
+        return RefreshSummary(changed: changed, failed: failed, total: current.count,
+                               networkSeconds: networkSeconds, fastestDetectionSeconds: fastestDetectionSeconds)
     }
 
     /// Vuelca lo nuevo de `fresh` sobre el podcast ya guardado, sin tocar el estado de lo que ya
     /// había, y repara URLs http:// antiguas en episodios ya existentes (carátula, audio y
     /// capítulos) — iOS las bloquea desde el arreglo del feed de Emilcar/Histocast, pero los
     /// episodios guardados antes de ese arreglo se quedaron con la URL vieja para siempre.
-    private func merge(_ fresh: Podcast, into index: Int) {
+    /// Devuelve los episodios que eran realmente nuevos (para medir cuánto se tarda en detectarlos).
+    @discardableResult
+    private func merge(_ fresh: Podcast, into index: Int) -> [Episode] {
         var updated = podcasts[index]
         updated.summary = fresh.summary.isEmpty ? updated.summary : fresh.summary
         updated.artworkURL = fresh.artworkURL ?? updated.artworkURL
@@ -428,6 +457,7 @@ final class AppStore {
         }
         podcasts[index] = updated
         addToSmartPlaylists(newEpisodes, from: updated.id)
+        return newEpisodes
     }
 
     /// Refresca solo si el último refresco tiene más de 5 minutos (al volver a la app).

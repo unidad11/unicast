@@ -9,11 +9,19 @@ struct WakeEvent: Codable {
     let podcastsChanged: Int
     let podcastsFailed: Int
     let durationSeconds: Double
+    /// Suma de lo que tardó cada feed en responder (se solapan entre sí, así que puede superar
+    /// `durationSeconds`). Comparado con el total, separa "se fue en esperar al servidor" de "se
+    /// fue en procesar y guardar". Opcional: los eventos de antes de esta medición no lo traen.
+    var networkSeconds: Double? = nil
+    /// Del episodio nuevo más reciente visto en este refresco, cuánto tardó Unicast en enterarse
+    /// desde que se publicó según el feed (segundos). nil si el refresco no trajo nada nuevo.
+    var fastestDetectionSeconds: Double? = nil
 
     enum Trigger: String, Codable {
         case appRefresh    // BGAppRefreshTask: segundo plano, ventana corta (~30s)
         case processing    // BGProcessingTask: segundo plano, ventana más larga (sin la app abierta)
         case foreground    // la app estaba abierta (al volver a ella o pull-to-refresh)
+        case shortcut      // disparado a mano por una automatización de Atajos (App Intent)
     }
 }
 
