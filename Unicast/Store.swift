@@ -371,8 +371,20 @@ final class AppStore {
     /// rotación de arriba ya hace que el siguiente refresco retome justo donde se quedó este.
     private let saveThrottle: TimeInterval = 3
 
+    /// Si ya hay un refresco en marcha, no se lanza otro: dos refrescos a la vez escribirían el
+    /// JSON de 11 MB de la biblioteca al mismo tiempo y uno pisaría al otro. Con la automatización
+    /// de Atajos ya son CUATRO las vías que pueden disparar un refresco (BGAppRefreshTask,
+    /// BGProcessingTask, primer plano, Atajos) — sin este candado, dos de ellas coincidiendo era
+    /// cuestión de tiempo.
+    private(set) var isRefreshing = false
+
     @discardableResult
     func refresh(downloads: DownloadManager) async -> RefreshSummary {
+        guard !isRefreshing else {
+            return RefreshSummary(changed: 0, failed: 0, total: 0, networkSeconds: 0, fastestDetectionSeconds: nil)
+        }
+        isRefreshing = true
+        defer { isRefreshing = false }
         let all = podcasts
         guard !all.isEmpty else {
             return RefreshSummary(changed: 0, failed: 0, total: 0, networkSeconds: 0, fastestDetectionSeconds: nil)

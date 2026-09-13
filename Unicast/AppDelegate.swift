@@ -16,6 +16,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// del store: reutiliza la misma instancia que ya usa toda la interfaz.
     static var onProcessingTask: (() async -> Void)?
 
+    /// Qué hacer cuando el usuario dispara el refresco desde una automatización de Atajos (ver
+    /// RefreshPodcastsIntent). Mismo patrón que `onProcessingTask` justo arriba: un `AppIntent`
+    /// no tiene @Environment, así que se conecta desde `UnicastApp.init()` para reutilizar la
+    /// MISMA instancia del store en vez de crear una copia nueva.
+    static var onShortcutRefresh: (() async -> Void)?
+
     func application(_ application: UIApplication,
                       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // El registro tiene que pasar aquí, antes de que la app termine de lanzarse — si se

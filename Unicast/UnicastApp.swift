@@ -21,10 +21,25 @@ struct UnicastApp: App {
         // el resto de la app, nunca una copia nueva.
         let store = store
         let downloadManager = downloadManager
+        let audioPlayer = audioPlayer
         AppDelegate.onProcessingTask = {
             let start = Date()
             let summary = await store.refresh(downloads: downloadManager)
             WakeLog.record(WakeEvent(date: start, trigger: .processing,
+                                      podcastsChanged: summary.changed, podcastsFailed: summary.failed,
+                                      durationSeconds: Date().timeIntervalSince(start),
+                                      networkSeconds: summary.networkSeconds,
+                                      fastestDetectionSeconds: summary.fastestDetectionSeconds))
+        }
+        // Disparo desde la automatización de Atajos (RefreshPodcastsIntent). No toca nada si hay
+        // audio sonando: no vale la pena arriesgarse a cortar la reproducción por adelantar un
+        // refresco que de todas formas volverá a intentarse en la próxima cita. El candado
+        // `isRefreshing` de Store ya evita que esto se pise con las otras tres vías.
+        AppDelegate.onShortcutRefresh = {
+            guard !audioPlayer.isPlaying else { return }
+            let start = Date()
+            let summary = await store.refresh(downloads: downloadManager)
+            WakeLog.record(WakeEvent(date: start, trigger: .shortcut,
                                       podcastsChanged: summary.changed, podcastsFailed: summary.failed,
                                       durationSeconds: Date().timeIntervalSince(start),
                                       networkSeconds: summary.networkSeconds,
