@@ -17,6 +17,15 @@ struct RefreshSummary {
     let fastestDetectionSeconds: Double?
 }
 
+/// Un episodio que DEBERÍA estar descargado y no lo está, junto al podcast al que pertenece.
+/// Con nombre propio (y no una tupla) porque la pantalla de diagnóstico lo recorre con `ForEach`,
+/// y `ForEach` necesita un `id`: sobre una tupla no se puede escribir un key path.
+struct PendingDownload: Identifiable {
+    let episode: Episode
+    let podcastID: UUID
+    var id: UUID { episode.id }
+}
+
 @Observable
 final class AppStore {
     // Contenido
@@ -30,6 +39,12 @@ final class AppStore {
     var selectedTab: Int = 0   // pestaña activa del TabView
     var wifiOnlyDownloads: Bool = true
     var defaultDownloadLimit: DownloadLimit = .last(5)
+
+    /// La biblioteca que hay cargada es la de ejemplo, no la del usuario (no había archivo o no
+    /// se pudo leer). Mientras esté en true NO se toca el disco: el audio descargado que haya ahí
+    /// pertenece a la biblioteca de verdad, y borrarlo por "huérfano" fue justo la forma en la que
+    /// un solo fallo de lectura se llevaba por delante todas las descargas.
+    private(set) var isSampleLibrary = false
 
     // Reproductor
     var nowPlaying: Episode?
@@ -80,6 +95,7 @@ final class AppStore {
             podcasts[pi].episodes[ei].isDownloaded = false
             podcasts[pi].episodes[ei].isPlayed = true   // apagado en "Todos"; nunca se re-descarga
             podcasts[pi].episodes[ei].playbackPosition = 0
+            podcasts[pi].episodes[ei].manuallyDownloaded = false
         }
         save()
     }
@@ -122,6 +138,7 @@ final class AppStore {
                 podcasts[pi].episodes[ei].isDownloaded = false
                 podcasts[pi].episodes[ei].isPlayed = true   // escuchado: desaparece de Todos
                 podcasts[pi].episodes[ei].playbackPosition = 0
+                podcasts[pi].episodes[ei].manuallyDownloaded = false
                 break
             }
         }
@@ -157,6 +174,16 @@ final class AppStore {
         save()
     }
 
+    /// Apunta que esta descarga la ha pedido el usuario a mano (botón de descargar en "Todos").
+    /// Se marca AL PULSAR, no al terminar: si la descarga acaba de madrugada con la app cerrada,
+    /// la marca ya está guardada y la rotación del límite no se lo lleva por delante.
+    func markManuallyDownloaded(_ episodeID: UUID, in podcastID: UUID) {
+        guard let pi = podcasts.firstIndex(where: { $0.id == podcastID }),
+              let ei = podcasts[pi].episodes.firstIndex(where: { $0.id == episodeID }) else { return }
+        podcasts[pi].episodes[ei].manuallyDownloaded = true
+        save()
+    }
+
     /// Pone al día la marca "Descargado" con lo que hay de verdad en disco, y vuelve a bajar lo
     /// que falte y estuviera a medio escuchar. Devuelve cuántos episodios se habían quedado sin audio.
     ///
@@ -170,6 +197,9 @@ final class AppStore {
     /// no hay nadie escuchando para apuntarlo.
     @discardableResult
     func reconcileDownloads(using downloads: DownloadManager) -> Int {
+        // Con la biblioteca de ejemplo cargada no hay nada real que repasar: lo único que se
+        // conseguiría es ponerse a bajar los episodios de mentira de `SampleData`.
+        guard !isSampleLibrary else { return 0 }
         var missing: [(episode: Episode, podcastID: UUID)] = []
         var recovered = 0
         for pi in podcasts.indices {
@@ -189,10 +219,15 @@ final class AppStore {
         }
         guard !missing.isEmpty || recovered > 0 else { return 0 }
         save()
-        // Los que estaban a medio escuchar se rebajan ya, sin esperar al refresco: pueden quedar
-        // fuera de la ventana de auto-descarga y entonces no los bajaría nadie.
-        for item in missing where item.episode.playbackPosition > 0 {
-            downloads.download(item.episode) { [weak self] in
+        // Se rebajan TODOS los que se quedaron sin audio, no solo los empezados. Antes solo se
+        // recuperaban los de `playbackPosition > 0` y el resto quedaba a la espera del refresco —
+        // que nunca los recogía si ya habían salido de la ventana de auto-descarga: eran capítulos
+        // marcados "Descargado" que en el móvil no existían y nadie volvía a bajar jamás.
+        for item in missing where !item.episode.isPlayed {
+            // Uno que el usuario bajó a mano se recupera con la red que haya; los automáticos
+            // respetan "Descargar solo con WiFi".
+            let cellular = item.episode.manuallyDownloaded || !wifiOnlyDownloads
+            downloads.download(item.episode, allowsCellular: cellular) { [weak self] in
                 self?.markDownloaded(item.episode.id, in: item.podcastID)
             }
         }
@@ -285,30 +320,68 @@ final class AppStore {
         // Migración: si un podcast viejo no tiene fecha de alta, la fijo al 4º más reciente
         // (así no vuelve a bajar el histórico).
         if podcasts[pi].downloadFromDate == nil {
-            let s = podcasts[pi].episodes.sorted { $0.publishedAt > $1.publishedAt }
-            podcasts[pi].downloadFromDate = s.count >= 4 ? s[3].publishedAt : (s.last?.publishedAt ?? Date())
+            podcasts[pi].downloadFromDate = effectiveDownloadFrom(podcasts[pi])
         }
         let podcast = podcasts[pi]
-        let from = podcast.downloadFromDate ?? .distantPast
-        // SOLO episodios publicados desde el alta (la base + los nuevos). Nunca el histórico.
-        let eligible = podcast.episodes.filter { $0.publishedAt >= from }.sorted { $0.publishedAt > $1.publishedAt }
-        let target: Int
-        switch podcast.downloadLimit {
-        case .all: target = eligible.count
-        case .last(let n): target = n
-        }
-        let keep = Array(eligible.prefix(target))
+        let keep = autoDownloadWindow(for: podcast)
         let keepIDs = Set(keep.map(\.id))
         // También se pregunta al disco, no solo al flag en memoria: si `onFinished` no llegó a
         // marcar una descarga de la noche (el caso que arregla el bug de arriba, en versiones
         // futuras si volviera a colarse uno parecido), sin este chequeo se re-descargaría el
         // mismo mp3 entero en cada refresco, varias veces al día.
         for ep in keep where !ep.isDownloaded && !ep.isPlayed && !DownloadManager.isDownloaded(ep.id) {
-            downloads.download(ep) { [weak self] in self?.markDownloaded(ep.id, in: podcastID) }
+            downloads.download(ep, allowsCellular: !wifiOnlyDownloads) { [weak self] in
+                self?.markDownloaded(ep.id, in: podcastID)
+            }
         }
-        // Rotación: borrar los descargados que ya no entran (sin empezar a escuchar).
-        for ep in podcast.episodes where ep.isDownloaded && !keepIDs.contains(ep.id) && ep.playbackPosition == 0 {
+        // Rotación: borrar los descargados que ya no entran (sin empezar a escuchar). Los que el
+        // usuario se bajó A MANO quedan fuera de la rotación: los eligió él, los borra él.
+        for ep in podcast.episodes
+        where ep.isDownloaded && !keepIDs.contains(ep.id) && ep.playbackPosition == 0 && !ep.manuallyDownloaded {
             removeFromDownloads(ep.id, in: podcastID)
+        }
+    }
+
+    /// Qué episodios DEBERÍAN estar descargados de un podcast: los publicados desde el alta
+    /// (nunca el histórico anterior), los más recientes primero, recortados al límite del podcast.
+    private func autoDownloadWindow(for podcast: Podcast) -> [Episode] {
+        let from = effectiveDownloadFrom(podcast)
+        let eligible = podcast.episodes.filter { $0.publishedAt >= from }.sorted { $0.publishedAt > $1.publishedAt }
+        switch podcast.downloadLimit {
+        case .all: return eligible
+        case .last(let n): return Array(eligible.prefix(n))
+        }
+    }
+
+    /// Fecha de corte efectiva de un podcast. Si es de antes de que existiera `downloadFromDate`,
+    /// se comporta como si fuera la del 4º episodio más reciente — el mismo criterio que usa la
+    /// migración de `applyAutoDownload`, para que consultar y actuar den siempre lo mismo.
+    private func effectiveDownloadFrom(_ podcast: Podcast) -> Date {
+        if let date = podcast.downloadFromDate { return date }
+        let sorted = podcast.episodes.sorted { $0.publishedAt > $1.publishedAt }
+        return sorted.count >= 4 ? sorted[3].publishedAt : (sorted.last?.publishedAt ?? Date())
+    }
+
+    /// Todo lo que debería estar descargado en la biblioteca y todavía no está. Es la lista que
+    /// enseña la pantalla de diagnóstico, y lo que baja su botón.
+    func pendingDownloads() -> [PendingDownload] {
+        var pending: [PendingDownload] = []
+        for podcast in podcasts where podcast.autoDownload {
+            for ep in autoDownloadWindow(for: podcast)
+            where !ep.isPlayed && !DownloadManager.isDownloaded(ep.id) {
+                pending.append(PendingDownload(episode: ep, podcastID: podcast.id))
+            }
+        }
+        return pending
+    }
+
+    /// Baja ya todo lo que falte (botón "Descargar lo que falta" del diagnóstico). Lo pide el
+    /// usuario, así que NO se aplica "Descargar solo con WiFi".
+    func downloadPending(using downloads: DownloadManager) {
+        for item in pendingDownloads() {
+            downloads.download(item.episode) { [weak self] in
+                self?.markDownloaded(item.episode.id, in: item.podcastID)
+            }
         }
     }
 
@@ -318,6 +391,7 @@ final class AppStore {
         guard let pi = podcasts.firstIndex(where: { $0.id == podcastID }),
               let ei = podcasts[pi].episodes.firstIndex(where: { $0.id == episodeID }) else { return }
         podcasts[pi].episodes[ei].isDownloaded = false
+        podcasts[pi].episodes[ei].manuallyDownloaded = false
         save()
     }
 
@@ -325,7 +399,10 @@ final class AppStore {
     func clearDownloads(for podcastID: UUID) {
         guard let pi = podcasts.firstIndex(where: { $0.id == podcastID }) else { return }
         for ep in podcasts[pi].episodes where ep.isDownloaded { DownloadManager.deleteFile(for: ep.id) }
-        for ei in podcasts[pi].episodes.indices { podcasts[pi].episodes[ei].isDownloaded = false }
+        for ei in podcasts[pi].episodes.indices {
+            podcasts[pi].episodes[ei].isDownloaded = false
+            podcasts[pi].episodes[ei].manuallyDownloaded = false
+        }
         save()
     }
 
@@ -419,18 +496,24 @@ final class AppStore {
                 networkSeconds += netTime
                 if case .failed = result { failed += 1 }
                 guard let index = podcasts.firstIndex(where: { $0.id == id }) else { continue }
-                guard case .fetched(let fresh, let etag, let lastModified) = result else { continue }
-                changed += 1
-                let newEpisodes = merge(fresh, into: index)
-                for episode in newEpisodes {
-                    let detection = Date().timeIntervalSince(episode.publishedAt)
-                    if fastestDetectionSeconds == nil || detection < fastestDetectionSeconds! {
-                        fastestDetectionSeconds = detection
+                if case .fetched(let fresh, let etag, let lastModified) = result {
+                    changed += 1
+                    let newEpisodes = merge(fresh, into: index)
+                    for episode in newEpisodes {
+                        let detection = Date().timeIntervalSince(episode.publishedAt)
+                        if fastestDetectionSeconds == nil || detection < fastestDetectionSeconds! {
+                            fastestDetectionSeconds = detection
+                        }
                     }
+                    podcasts[index].feedETag = etag
+                    podcasts[index].feedLastModified = lastModified
                 }
-                podcasts[index].feedETag = etag
-                podcasts[index].feedLastModified = lastModified
-                applyAutoDownload(for: id, using: downloads)   // baja nuevos y rota el límite
+                // Baja lo que falte y rota el límite SIEMPRE, traiga o no novedades el feed. Antes
+                // esto vivía dentro del `case .fetched` y ahí estaba la fuga: con el refresco
+                // condicional (ETag/304) la inmensa mayoría de los podcasts responden "sin
+                // cambios", así que una descarga que había fallado no se reintentaba NUNCA — se
+                // quedaba esperando a que ese podcast publicara un capítulo nuevo.
+                applyAutoDownload(for: id, using: downloads)
                 if Date().timeIntervalSince(lastSaveAt) >= saveThrottle {
                     save()
                     lastSaveAt = Date()
@@ -516,6 +599,9 @@ final class AppStore {
         if let state = Persistence.load() {
             store.apply(state)
         } else {
+            // Ojo: aquí se llega tanto en una instalación nueva como si el archivo real no se
+            // pudo leer (en ese caso `Persistence.load()` ya lo ha apartado, no lo pisamos).
+            store.isSampleLibrary = true
             store.podcasts = SampleData.podcasts
             store.playlists = SampleData.playlists
             store.nowPlaying = SampleData.nowPlaying

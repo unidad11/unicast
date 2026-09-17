@@ -53,6 +53,35 @@ struct Podcast: Identifiable, Hashable, Codable {
         self.feedLastModified = feedLastModified
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, title, author, summary, feedURL, colorHex, artworkURL, episodes
+        case autoDownload, downloadLimit, sortOrder, continuousDirection
+        case notifyNew, autoDeleteOnFinish, downloadFromDate, feedETag, feedLastModified
+    }
+
+    /// Carga tolerante (ver `AppState.init(from:)`): un campo nuevo o un valor corrupto no puede
+    /// costar el podcast entero, y menos aún la biblioteca completa.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.lenient(.id, or: UUID())
+        title = c.lenient(.title, or: "")
+        author = c.lenient(.author, or: "")
+        summary = c.lenient(.summary, or: "")
+        feedURL = c.lenientOptional(URL.self, .feedURL)
+        colorHex = c.lenient(.colorHex, or: "6B5CE7")
+        artworkURL = c.lenientOptional(URL.self, .artworkURL)
+        episodes = c.lenientArray(Episode.self, .episodes)
+        autoDownload = c.lenient(.autoDownload, or: true)
+        downloadLimit = c.lenient(.downloadLimit, or: DownloadLimit.last(5))
+        sortOrder = c.lenient(.sortOrder, or: EpisodeSort.newest)
+        continuousDirection = c.lenient(.continuousDirection, or: PlayDirection.posteriores)
+        notifyNew = c.lenient(.notifyNew, or: true)
+        autoDeleteOnFinish = c.lenient(.autoDeleteOnFinish, or: true)
+        downloadFromDate = c.lenientOptional(Date.self, .downloadFromDate)
+        feedETag = c.lenientOptional(String.self, .feedETag)
+        feedLastModified = c.lenientOptional(String.self, .feedLastModified)
+    }
+
     /// Episodios descargados (pestaña "Descargados").
     var downloadedEpisodes: [Episode] { episodes.filter(\.isDownloaded) }
 
@@ -77,11 +106,15 @@ struct Episode: Identifiable, Hashable, Codable {
     var playbackPosition: TimeInterval  // dónde se quedó, para retomar (puntos 11 y 12)
     var chapters: [Chapter]
     var chaptersURL: URL?    // capítulos en un JSON aparte (formato Podcasting 2.0), si el feed los trae así
+    /// Lo bajó el usuario a mano desde "Todos", no el auto-descargar. La rotación del límite de
+    /// descargas NO puede tocar estos: si alguien se baja un capítulo viejo a propósito para el
+    /// avión, el siguiente refresco no se lo puede borrar por "no entrar en los 5 últimos".
+    var manuallyDownloaded: Bool
 
     init(id: UUID = UUID(), title: String, summary: String = "", podcastTitle: String,
          colorHex: String, artworkURL: URL? = nil, audioURL: URL? = nil, duration: TimeInterval, publishedAt: Date,
          isDownloaded: Bool = false, isPlayed: Bool = false, playbackPosition: TimeInterval = 0, chapters: [Chapter] = [],
-         chaptersURL: URL? = nil) {
+         chaptersURL: URL? = nil, manuallyDownloaded: Bool = false) {
         self.id = id
         self.title = title
         self.summary = summary
@@ -96,6 +129,35 @@ struct Episode: Identifiable, Hashable, Codable {
         self.playbackPosition = playbackPosition
         self.chapters = chapters
         self.chaptersURL = chaptersURL
+        self.manuallyDownloaded = manuallyDownloaded
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, summary, podcastTitle, colorHex, artworkURL, audioURL
+        case duration, publishedAt, isDownloaded, isPlayed, playbackPosition
+        case chapters, chaptersURL, manuallyDownloaded
+    }
+
+    /// Carga tolerante (ver `AppState.init(from:)`). `publishedAt` cae a `distantPast` a propósito
+    /// si viene ilegible: así el episodio queda FUERA de la ventana de auto-descarga en vez de
+    /// colarse dentro y provocar descargas que nadie pidió.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.lenient(.id, or: UUID())
+        title = c.lenient(.title, or: "")
+        summary = c.lenient(.summary, or: "")
+        podcastTitle = c.lenient(.podcastTitle, or: "")
+        colorHex = c.lenient(.colorHex, or: "6B5CE7")
+        artworkURL = c.lenientOptional(URL.self, .artworkURL)
+        audioURL = c.lenientOptional(URL.self, .audioURL)
+        duration = c.lenient(.duration, or: TimeInterval(0))
+        publishedAt = c.lenient(.publishedAt, or: Date.distantPast)
+        isDownloaded = c.lenient(.isDownloaded, or: false)
+        isPlayed = c.lenient(.isPlayed, or: false)
+        playbackPosition = c.lenient(.playbackPosition, or: TimeInterval(0))
+        chapters = c.lenientArray(Chapter.self, .chapters)
+        chaptersURL = c.lenientOptional(URL.self, .chaptersURL)
+        manuallyDownloaded = c.lenient(.manuallyDownloaded, or: false)
     }
 
     /// Tiempo que falta para terminar, en segundos.

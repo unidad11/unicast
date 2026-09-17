@@ -178,10 +178,18 @@ final class DownloadManager: NSObject {
     /// Descarga el audio del episodio. Llama a `completion` en el hilo principal, y SOLO si el
     /// archivo llegó a guardarse de verdad (antes se avisaba "Descargado" y se marcaba como tal
     /// aunque la descarga hubiera fallado, dejando el episodio en un estado mentiroso).
-    func download(_ episode: Episode, completion: @escaping () -> Void) {
+    ///
+    /// `allowsCellular` es donde se aplica de verdad el ajuste "Descargar solo con WiFi": las
+    /// descargas AUTOMÁTICAS (refresco nocturno, rotación del límite) lo pasan a false cuando el
+    /// ajuste está puesto, y entonces iOS deja la transferencia esperando a que haya WiFi en vez
+    /// de gastar datos del móvil. Las que pide el usuario a mano NUNCA lo aplican: si pulsa el
+    /// botón de descargar es porque quiere ese episodio ahora, con la red que haya.
+    func download(_ episode: Episode, allowsCellular: Bool = true, completion: @escaping () -> Void) {
         guard let url = episode.audioURL, !downloading.contains(episode.id) else { return }
         downloading.insert(episode.id)
-        let task = session.downloadTask(with: url)
+        var request = URLRequest(url: url)
+        request.allowsCellularAccess = allowsCellular
+        let task = session.downloadTask(with: request)
         // La identidad del episodio viaja DENTRO de la tarea, no solo en memoria: es lo que hace
         // que una descarga terminada de madrugada se pueda guardar en su sitio al despertar.
         task.taskDescription = Self.encode(TaskInfo(id: episode.id,

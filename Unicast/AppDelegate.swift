@@ -8,7 +8,7 @@ import BackgroundTasks
 /// no tiene caso para procesamiento, solo para refresco y sesiones URL: hay que registrarla aquí
 /// a mano, al estilo de antes de iOS 17).
 final class AppDelegate: NSObject, UIApplicationDelegate {
-    static let processingTaskIdentifier = "com.jbs.Unicast.processing"
+    static let processingTaskIdentifier = BackgroundScheduling.processingIdentifier
 
     /// Qué hacer cuando iOS concede la ventana de procesamiento. La rellena `UnicastApp` en su
     /// `init` — antes de `.onAppear`, que llega más tarde — para que esté lista en cuanto el

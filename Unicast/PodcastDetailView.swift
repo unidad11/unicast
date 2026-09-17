@@ -296,6 +296,9 @@ private struct EpisodeRow: View {
                 .accessibilityLabel("Descargado")
         } else {
             Button {
+                // Se apunta ANTES de empezar: la rotación del límite no puede borrar un episodio
+                // que el usuario ha pedido a mano, y la descarga puede terminar con la app cerrada.
+                store.markManuallyDownloaded(episode.id, in: podcastID)
                 downloads.download(episode) { store.markDownloaded(episode.id, in: podcastID) }
             } label: {
                 Image(systemName: "arrow.down")

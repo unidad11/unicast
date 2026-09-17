@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Rutas dentro de los ajustes generales.
-enum SettingsRoute: Hashable { case storage }
+enum SettingsRoute: Hashable { case storage, diagnostics }
 
 /// Ajustes generales de Unicast: apariencia, descargas e importar/exportar OPML.
 struct SettingsView: View {
@@ -38,6 +38,9 @@ struct SettingsView: View {
                         NavigationLink(value: SettingsRoute.storage) {
                             Label("Almacenamiento", systemImage: "internaldrive")
                         }
+                        NavigationLink(value: SettingsRoute.diagnostics) {
+                            Label("Diagnóstico", systemImage: "stethoscope")
+                        }
                     }
                     .listRowBackground(Theme.surface)
 
@@ -63,6 +66,7 @@ struct SettingsView: View {
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
                 case .storage: StorageView()
+                case .diagnostics: DownloadDiagnosticsView()
                 }
             }
             .task { opmlURL = OPMLExporter.writeTempFile(from: store.podcasts) }
