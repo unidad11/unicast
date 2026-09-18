@@ -628,30 +628,43 @@ final class AppStore {
         updated.summary = fresh.summary.isEmpty ? updated.summary : fresh.summary
         updated.artworkURL = fresh.artworkURL ?? updated.artworkURL
 
-        // ---- Paso 1: traspaso ----
-        // Lo que ya estaba guardado es de antes de que se leyeran los <guid>, así que no tiene
-        // identificador. A cada uno se le empareja el capítulo del feed con su MISMO título y la
-        // fecha MÁS CERCANA, uno a uno y sin repetir.
+        // ---- Paso 1: emparejar identidades sueltas ----
+        // Cubre dos casos que acaban igual: un episodio guardado que todavía no tiene identificador
+        // (la biblioteca es de antes de que se leyera el <guid>), y uno cuyo identificador ya no
+        // aparece en el feed porque el autor se lo ha cambiado — cosa que pasa de verdad, y que si
+        // no se repara mete el mismo capítulo dos veces y lo vuelve a descargar entero.
         //
-        // Lo de la fecha no es un detalle: hay programas que reciclan el mismo título cada pocos
-        // meses. Le pasa de verdad a "Todo por la radio" de la SER, que el 15/09/2026 publicó un
-        // capítulo con el título exacto de otro del 07/07/2026. Emparejando solo por título, el de
-        // septiembre le habría robado la identidad al de julio y el audio de julio habría acabado
-        // colgando del capítulo equivocado.
+        // A cada uno se le busca el capítulo del feed con su MISMO título y la fecha MÁS CERCANA,
+        // uno a uno y sin repetir. Lo de la fecha no es un detalle: hay programas que reciclan el
+        // mismo título cada pocos meses. Le pasa a "Todo por la radio" de la SER, que el 15/09/2026
+        // publicó un capítulo con el título exacto de otro del 07/07/2026. Emparejando solo por
+        // título, el de septiembre le habría robado la identidad al de julio.
+        let freshGuids = Set(fresh.episodes.compactMap(\.guid))
         var freshByTitle: [String: [Int]] = [:]
         for (position, episode) in fresh.episodes.enumerated() where episode.guid != nil {
             freshByTitle[episode.title, default: []].append(position)
         }
+        // Los capítulos del feed cuyo identificador YA tenemos no están en juego: son de su dueño.
+        let storedGuids = Set(updated.episodes.compactMap(\.guid))
         var claimed = Set<Int>()
-        for position in updated.episodes.indices where updated.episodes[position].guid == nil {
+        for (position, incoming) in fresh.episodes.enumerated() {
+            if let guid = incoming.guid, storedGuids.contains(guid) { claimed.insert(position) }
+        }
+        for position in updated.episodes.indices {
             let stored = updated.episodes[position]
+            // Tiene identificador y sigue en el feed: nada que hacer.
+            if let guid = stored.guid, freshGuids.contains(guid) { continue }
             var best: Int?
             var bestDistance = Double.greatestFiniteMagnitude
             for candidate in freshByTitle[stored.title] ?? [] where !claimed.contains(candidate) {
                 let distance = abs(fresh.episodes[candidate].publishedAt.timeIntervalSince(stored.publishedAt))
                 if distance < bestDistance { bestDistance = distance; best = candidate }
             }
+            // Si el episodio guardado YA tenía identificador, solo se le cambia cuando el del feed
+            // es claramente el mismo capítulo (mismo título y prácticamente la misma fecha). Para
+            // uno sin identificador se es más flexible: es el traspaso de la biblioteca vieja.
             guard let best else { continue }
+            if stored.guid != nil && bestDistance > 2 * 86400 { continue }
             claimed.insert(best)
             updated.episodes[position].guid = fresh.episodes[best].guid
         }

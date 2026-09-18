@@ -150,3 +150,70 @@ final class FusionDeEpisodiosTests: XCTestCase {
         XCTAssertTrue(despues.manuallyDownloaded, "Ni olvidar que lo bajó a mano")
     }
 }
+
+/// Casos que vienen del código de AntennaPod, que lleva años lidiando con feeds mal hechos:
+/// "los editores a veces la lían añadiendo episodios dos veces o cambiándole el identificador a
+/// uno que ya existía".
+@MainActor
+final class FeedsMalHechosTests: XCTestCase {
+
+    private func episodio(_ titulo: String, guid: String?, descargado: Bool = false,
+                          posicion: TimeInterval = 0, fecha: Date) -> Episode {
+        Episode(title: titulo, podcastTitle: "P", colorHex: "FFFFFF",
+                audioURL: URL(string: "https://ejemplo.test/a.mp3"), duration: 100,
+                publishedAt: fecha, isDownloaded: descargado, playbackPosition: posicion, guid: guid)
+    }
+
+    private func store(con episodios: [Episode]) -> AppStore {
+        let s = AppStore()
+        s.podcasts = [Podcast(title: "P", author: "A", colorHex: "FFFFFF", episodes: episodios)]
+        return s
+    }
+
+    /// El autor le cambia el identificador a un capítulo que ya teníamos descargado. Sin reparar,
+    /// entraría como capítulo nuevo y se bajaría otra vez el mismo audio.
+    func testSiElAutorCambiaElIdentificadorSeRepararEnVezDeDuplicar() {
+        let fecha = Date(timeIntervalSince1970: 1_700_000_000)
+        let s = store(con: [episodio("Capítulo uno", guid: "viejo-1", descargado: true,
+                                      posicion: 900, fecha: fecha)])
+        let nuevos = s.merge(Podcast(title: "P", author: "A", colorHex: "FFFFFF",
+                                     episodes: [episodio("Capítulo uno", guid: "nuevo-1", fecha: fecha)]),
+                             into: 0)
+
+        XCTAssertTrue(nuevos.isEmpty, "Es el mismo capítulo con otro identificador, no uno nuevo")
+        XCTAssertEqual(s.podcasts[0].episodes.count, 1, "No puede duplicarse")
+        XCTAssertEqual(s.podcasts[0].episodes[0].guid, "nuevo-1", "Adopta el identificador nuevo")
+        XCTAssertTrue(s.podcasts[0].episodes[0].isDownloaded, "Conserva su descarga")
+        XCTAssertEqual(s.podcasts[0].episodes[0].playbackPosition, 900, "Y dónde se quedó")
+    }
+
+    /// Pero un capítulo con el mismo título y una fecha MUY distinta no es el mismo: no puede
+    /// robarle la identidad al que ya teníamos.
+    func testUnCapituloLejanoEnElTiempoNoRobaLaIdentidad() {
+        let julio = Date(timeIntervalSince1970: 1_783_000_000)
+        let s = store(con: [episodio("Bonus", guid: "julio", descargado: true, fecha: julio)])
+        let nuevos = s.merge(Podcast(title: "P", author: "A", colorHex: "FFFFFF",
+                                     episodes: [episodio("Bonus", guid: "septiembre",
+                                                          fecha: julio.addingTimeInterval(70 * 86400)),
+                                                episodio("Bonus", guid: "julio", fecha: julio)]),
+                             into: 0)
+        XCTAssertEqual(nuevos.count, 1)
+        XCTAssertEqual(nuevos.first?.guid, "septiembre")
+        XCTAssertEqual(s.podcasts[0].episodes.first { $0.publishedAt == julio }?.guid, "julio")
+    }
+
+    /// Un episodio viejo que ya no sale en el feed (se ha caído de la ventana) no puede perder su
+    /// identificador ni emparejarse con cualquier cosa.
+    func testUnEpisodioQueYaNoEstaEnElFeedSeQuedaComoEsta() {
+        let fecha = Date(timeIntervalSince1970: 1_700_000_000)
+        let s = store(con: [episodio("Antiguo", guid: "g-antiguo", descargado: true, fecha: fecha)])
+        _ = s.merge(Podcast(title: "P", author: "A", colorHex: "FFFFFF",
+                            episodes: [episodio("Reciente", guid: "g-reciente",
+                                                 fecha: fecha.addingTimeInterval(86400))]),
+                    into: 0)
+        let antiguo = s.podcasts[0].episodes.first { $0.title == "Antiguo" }
+        XCTAssertEqual(antiguo?.guid, "g-antiguo", "No se le toca el identificador")
+        XCTAssertEqual(antiguo?.isDownloaded, true)
+        XCTAssertEqual(s.podcasts[0].episodes.count, 2)
+    }
+}

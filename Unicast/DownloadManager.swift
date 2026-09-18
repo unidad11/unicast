@@ -122,6 +122,41 @@ final class DownloadManager: NSObject {
             .appendingPathComponent("audio", isDirectory: true)
     }
 
+    /// Dónde se guardan los datos de reanudación de las descargas que se cortaron a medias.
+    ///
+    /// Una descarga nocturna se corta con facilidad: el móvil cambia de red, se suspende un
+    /// instante, el servidor cierra la conexión. Sin esto se volvía a empezar desde cero cada vez
+    /// —y un episodio de 150 MB no terminaba nunca si se cortaba a la mitad de forma habitual—.
+    /// Con el "recibo" que da iOS al cancelar, la descarga sigue por donde iba. Lo hacen tanto
+    /// Pocket Casts como AntennaPod, cada uno a su manera.
+    private static var resumeDirectory: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("resume", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
+    private static func resumeURL(for episodeID: UUID) -> URL {
+        resumeDirectory.appendingPathComponent("\(episodeID).resume")
+    }
+
+    private static func saveResumeData(_ data: Data, for episodeID: UUID) {
+        try? data.write(to: resumeURL(for: episodeID), options: .atomic)
+    }
+
+    private static func takeResumeData(for episodeID: UUID) -> Data? {
+        let url = resumeURL(for: episodeID)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        try? FileManager.default.removeItem(at: url)
+        return data
+    }
+
+    private static func discardResumeData(for episodeID: UUID) {
+        try? FileManager.default.removeItem(at: resumeURL(for: episodeID))
+    }
+
     /// Ruta local donde se guarda el audio de un episodio.
     static func localURL(for episodeID: UUID) -> URL {
         audioDirectory.appendingPathComponent("\(episodeID).mp3")
@@ -203,9 +238,18 @@ final class DownloadManager: NSObject {
                    completion: @escaping () -> Void) {
         guard let url = episode.audioURL, !downloading.contains(episode.id) else { return }
         downloading.insert(episode.id)
-        var request = URLRequest(url: url)
-        request.allowsCellularAccess = allowsCellular
-        let task = session.downloadTask(with: request)
+        // Si esta descarga se quedó a medias, se retoma donde iba en vez de empezar de cero.
+        let task: URLSessionDownloadTask
+        let resumed: Bool
+        if let resumeData = Self.takeResumeData(for: episode.id) {
+            task = session.downloadTask(withResumeData: resumeData)
+            resumed = true
+        } else {
+            var request = URLRequest(url: url)
+            request.allowsCellularAccess = allowsCellular
+            task = session.downloadTask(with: request)
+            resumed = false
+        }
         // Cuánto va a pesar esto. Apple lo pide expresamente en el SDK ("the system uses this to
         // optimize the scheduling of URL session tasks (...) developers are strongly encouraged to
         // provide an approximate upper bound"), y es la ÚNICA influencia que tiene la app sobre
@@ -223,7 +267,8 @@ final class DownloadManager: NSObject {
         // Se apunta la hora de ENCOLADO y si la app estaba en primer plano, que es lo que decide
         // si iOS arranca la transferencia ya o la aparca a su gusto.
         let foreground = Self.isForeground()
-        DownloadLog.queued(DownloadEvent(episodeID: episode.id, title: episode.title,
+        DownloadLog.queued(DownloadEvent(episodeID: episode.id,
+                                          title: resumed ? "\(episode.title) (retomada)" : episode.title,
                                           podcastTitle: episode.podcastTitle, queuedAt: Date(),
                                           foreground: foreground, expectedBytes: episode.audioBytes))
         task.resume()
@@ -263,8 +308,16 @@ extension DownloadManager: URLSessionDownloadDelegate {
         let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 200
         let attributes = try? FileManager.default.attributesOfItem(atPath: location.path)
         let size = (attributes?[.size] as? Int64) ?? 0
-        guard (200...299).contains(status), size >= Self.minimumValidSize else {
-            DownloadLog.finished(info.id, outcome: "descartada (HTTP \(status), \(size) bytes)", bytes: size)
+        // Un servidor puede responder 200 con una página de error en HTML en lugar del audio. Si
+        // dice que es texto y además pesa poco, no es un episodio: es un aviso de error. Pocket
+        // Casts y AntennaPod hacen esta misma comprobación, cada uno por su cuenta.
+        let tipo = (downloadTask.response?.mimeType ?? "").lowercased()
+        let pareceTexto = tipo.contains("text") || tipo.contains("html") || tipo.contains("xml")
+        guard (200...299).contains(status), size >= Self.minimumValidSize,
+              !(pareceTexto && size < 150 * 1024) else {
+            Self.discardResumeData(for: info.id)
+            let motivo = pareceTexto ? "el servidor devolvió texto, no audio" : "HTTP \(status), \(size) bytes"
+            DownloadLog.finished(info.id, outcome: "descartada (\(motivo))", bytes: size)
             DispatchQueue.main.async { [weak self] in
                 self?.downloading.remove(info.id)
                 self?.pending[downloadTask.taskIdentifier] = nil
@@ -272,6 +325,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
             }
             return
         }
+        Self.discardResumeData(for: info.id)   // terminó bien: el recibo ya no vale
         let destination = DownloadManager.localURL(for: info.id)
         try? FileManager.default.removeItem(at: destination)
         let success = (try? FileManager.default.moveItem(at: location, to: destination)) != nil
@@ -292,8 +346,16 @@ extension DownloadManager: URLSessionDownloadDelegate {
     /// marcada como "descargando" para siempre.
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let error else { return }
+        let ns = error as NSError
         if let id = Self.decode(task.taskDescription)?.id {
-            DownloadLog.finished(id, outcome: "error: \((error as NSError).localizedDescription)", bytes: nil)
+            // iOS entrega un "recibo" con lo que ya se había bajado: se guarda para retomar la
+            // descarga por donde iba en vez de volver a empezar.
+            if let resumeData = ns.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
+                Self.saveResumeData(resumeData, for: id)
+                DownloadLog.finished(id, outcome: "cortada, se retomará donde iba", bytes: nil)
+            } else {
+                DownloadLog.finished(id, outcome: "error: \(ns.localizedDescription)", bytes: nil)
+            }
         }
         DispatchQueue.main.async { [weak self] in
             if let id = Self.decode(task.taskDescription)?.id {
