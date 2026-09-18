@@ -59,6 +59,10 @@ final class AppStore {
     /// un solo fallo de lectura se llevaba por delante todas las descargas.
     private(set) var isSampleLibrary = false
 
+    /// No escribir en disco bajo ningún concepto. Se enciende cuando la biblioteca de verdad está
+    /// en disco pero no se ha podido leer: guardar en ese estado sería sustituirla por nada.
+    private(set) var savingBlocked = false
+
     // Reproductor
     var nowPlaying: Episode?
     var isPlaying: Bool = false
@@ -191,6 +195,21 @@ final class AppStore {
         save()
     }
 
+    /// Devuelve un episodio a "no escuchado", para que la auto-descarga vuelva a ocuparse de él.
+    ///
+    /// Hasta ahora `isPlayed` era un camino de ida sin vuelta: lo ponen a true tanto terminar un
+    /// episodio como descartarlo deslizando, y NADA en toda la app lo devolvía a false. Un capítulo
+    /// descartado por error quedaba excluido de la descarga automática para siempre, sin ninguna
+    /// forma de deshacerlo.
+    func markUnplayed(_ episodeID: UUID, in podcastID: UUID) {
+        guard let pi = podcasts.firstIndex(where: { $0.id == podcastID }),
+              let ei = podcasts[pi].episodes.firstIndex(where: { $0.id == episodeID }) else { return }
+        podcasts[pi].episodes[ei].isPlayed = false
+        podcasts[pi].episodes[ei].downloadFailures = 0   // que se reintente ya, sin esperas
+        podcasts[pi].episodes[ei].lastDownloadFailureAt = nil
+        save()
+    }
+
     /// Apunta que una descarga ha fallado, para no reintentarla sin parar.
     func markDownloadFailed(_ episodeID: UUID) {
         for pi in podcasts.indices {
@@ -277,6 +296,13 @@ final class AppStore {
     func removePodcast(_ id: UUID) {
         if let podcast = podcasts.first(where: { $0.id == id }) {
             for ep in podcast.episodes where ep.isDownloaded { DownloadManager.deleteFile(for: ep.id) }
+            // Si lo que está sonando era de este podcast, hay que soltarlo: su audio se acaba de
+            // borrar y el reproductor se quedaría apuntando a un archivo que ya no existe.
+            if let playing = nowPlaying, podcast.episodes.contains(where: { $0.id == playing.id }) {
+                nowPlaying = nil
+                isPlaying = false
+                isPlayerPresented = false
+            }
         }
         podcasts.removeAll { $0.id == id }
         save()
@@ -401,7 +427,12 @@ final class AppStore {
     private func effectiveDownloadFrom(_ podcast: Podcast) -> Date {
         if let date = podcast.downloadFromDate { return date }
         let sorted = podcast.episodes.sorted { $0.publishedAt > $1.publishedAt }
-        return sorted.count >= 4 ? sorted[3].publishedAt : (sorted.last?.publishedAt ?? Date())
+        if sorted.count >= 4 { return sorted[3].publishedAt }
+        // Sin episodios el corte NO puede ser "ahora": si el podcast acaba de estrenarse y su
+        // primer capítulo trae una fecha anterior al momento exacto en que le diste a seguir
+        // —cosa normal—, ese capítulo quedaría fuera para siempre. Sin histórico que proteger,
+        // el pasado es seguro: el límite de descargas ya acota cuántos se bajan.
+        return sorted.last?.publishedAt ?? .distantPast
     }
 
     /// Todo lo que debería estar descargado en la biblioteca y todavía no está. Es la lista que
@@ -594,20 +625,59 @@ final class AppStore {
         var updated = podcasts[index]
         updated.summary = fresh.summary.isEmpty ? updated.summary : fresh.summary
         updated.artworkURL = fresh.artworkURL ?? updated.artworkURL
-        let knownTitles = Set(updated.episodes.map(\.title))
-        let newEpisodes = fresh.episodes.filter { !knownTitles.contains($0.title) }
-        updated.episodes = newEpisodes + updated.episodes   // los nuevos, primero
-        let freshByTitle = Dictionary(fresh.episodes.map { ($0.title, $0) }, uniquingKeysWith: { a, _ in a })
-        for ei in updated.episodes.indices {
-            if updated.episodes[ei].chaptersURL == nil, let match = freshByTitle[updated.episodes[ei].title] {
-                updated.episodes[ei].chaptersURL = match.chaptersURL
+
+        // Índices de lo que ya está guardado: por identificador del feed (lo estable) y por título
+        // (el respaldo de siempre, para los feeds que no traen <guid>).
+        var indexByGuid: [String: Int] = [:]
+        var indexByTitle: [String: Int] = [:]
+        for (position, episode) in updated.episodes.enumerated() {
+            if let guid = episode.guid, indexByGuid[guid] == nil { indexByGuid[guid] = position }
+            if indexByTitle[episode.title] == nil { indexByTitle[episode.title] = position }
+        }
+
+        var newEpisodes: [Episode] = []
+        for incoming in fresh.episodes {
+            // 1) Lo conocemos por su identificador: es el mismo episodio aunque le hayan cambiado
+            //    el título. Antes esto entraba como capítulo nuevo y se volvía a descargar entero.
+            if let guid = incoming.guid, let position = indexByGuid[guid] {
+                adopt(incoming, into: &updated.episodes[position])
+                continue
             }
+            // 2) Traspaso: lo guardado es de antes de que se leyeran los <guid>, así que todavía no
+            //    tiene ninguno. Si el título coincide es el mismo episodio: se le adopta el
+            //    identificador y a partir de ahora ya no depende del título para nada.
+            if let position = indexByTitle[incoming.title], updated.episodes[position].guid == nil {
+                updated.episodes[position].guid = incoming.guid
+                if let guid = incoming.guid { indexByGuid[guid] = position }
+                adopt(incoming, into: &updated.episodes[position])
+                continue
+            }
+            // 3) El feed no da identificador y el título ya lo habíamos visto: se da por conocido.
+            if incoming.guid == nil, indexByTitle[incoming.title] != nil { continue }
+            // 4) Nuevo de verdad. Ojo: aquí entra también un episodio cuyo título coincide con otro
+            //    que YA tiene un identificador distinto — dos capítulos llamados igual ("Bonus",
+            //    "Especial"). Antes el segundo se descartaba en silencio y no se bajaba jamás.
+            newEpisodes.append(incoming)
+        }
+
+        updated.episodes = newEpisodes + updated.episodes   // los nuevos, primero
+        for ei in updated.episodes.indices {
             updated.episodes[ei].artworkURL = updated.episodes[ei].artworkURL?.securedHTTPS
             updated.episodes[ei].audioURL = updated.episodes[ei].audioURL?.securedHTTPS
         }
         podcasts[index] = updated
         addToSmartPlaylists(newEpisodes, from: updated.id)
         return newEpisodes
+    }
+
+    /// Refresca de un episodio ya guardado lo que el feed puede cambiar sin que deje de ser el
+    /// mismo episodio. NUNCA toca el estado del usuario: ni descargado, ni escuchado, ni la
+    /// posición de reproducción.
+    private func adopt(_ incoming: Episode, into stored: inout Episode) {
+        if !incoming.title.isEmpty { stored.title = incoming.title }
+        if stored.chaptersURL == nil { stored.chaptersURL = incoming.chaptersURL }
+        if stored.audioBytes == nil { stored.audioBytes = incoming.audioBytes }
+        if stored.audioURL == nil { stored.audioURL = incoming.audioURL }
     }
 
     /// Refresca solo si el último refresco tiene más de 5 minutos (al volver a la app).
@@ -673,16 +743,22 @@ final class AppStore {
     /// Crea el store cargando lo guardado en disco; la primera vez usa datos de ejemplo.
     static func loadOrSample() -> AppStore {
         let store = AppStore()
-        if let state = Persistence.load() {
+        switch Persistence.load() {
+        case .loaded(let state):
             store.apply(state)
-        } else {
-            // Ojo: aquí se llega tanto en una instalación nueva como si el archivo real no se
-            // pudo leer (en ese caso `Persistence.load()` ya lo ha apartado, no lo pisamos).
+        case .fresh:
+            // Instalación nueva (o archivo ilegible ya apartado a un lado): datos de ejemplo.
             store.isSampleLibrary = true
             store.podcasts = SampleData.podcasts
             store.playlists = SampleData.playlists
             store.nowPlaying = SampleData.nowPlaying
             store.save()
+        case .unreadable:
+            // El archivo está ahí pero no se ha podido leer AHORA. Se arranca en blanco y con el
+            // guardado bloqueado: ni datos de ejemplo ni `save()`, porque cualquiera de las dos
+            // cosas se llevaría por delante los 25 podcasts del usuario por un fallo pasajero.
+            store.isSampleLibrary = true
+            store.savingBlocked = true
         }
         return store
     }
@@ -708,5 +784,8 @@ final class AppStore {
     }
 
     /// Guarda el estado en disco.
-    func save() { Persistence.save(snapshot()) }
+    func save() {
+        guard !savingBlocked else { return }
+        Persistence.save(snapshot())
+    }
 }

@@ -174,6 +174,14 @@ struct PodcastDetailView: View {
                                 store.removeEpisode(episode.id, from: current.id)
                             } label: { Label("Borrar", systemImage: "trash") }
                         }
+                        // Marcar un escuchado como pendiente otra vez. Sin esto, un episodio
+                        // descartado por error no volvía a descargarse solo nunca más.
+                        if tab == .all && !isSelecting && episode.isPlayed {
+                            Button {
+                                store.markUnplayed(episode.id, in: current.id)
+                            } label: { Label("Pendiente", systemImage: "arrow.uturn.backward") }
+                            .tint(Theme.accent)
+                        }
                     }
                 }
             }

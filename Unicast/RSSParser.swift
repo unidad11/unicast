@@ -45,6 +45,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
     private var iChapters: [Chapter] = []
     private var iChaptersURL: URL?
     private var iBytes: Int64?      // tamaño del audio segun el feed (<enclosure length=...>)
+    private var iGuid: String?      // identificador estable del episodio (<guid>)
 
     init(feedURL: URL?, colorHex: String = "5B5BD6") {
         self.feedURL = feedURL
@@ -76,7 +77,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
         switch elementName {
         case "item":
             inItem = true
-            iTitle = ""; iSummary = ""; iAudio = nil; iDuration = 0; iBytes = nil
+            iTitle = ""; iSummary = ""; iAudio = nil; iDuration = 0; iBytes = nil; iGuid = nil
             iDate = Date(); iImage = nil; iChapters = []; iChaptersURL = nil
         case "image" where !inItem:
             inChannelImage = true
@@ -114,6 +115,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
         if inItem {
             switch elementName {
             case "title": iTitle = value
+            case "guid": iGuid = value.isEmpty ? nil : value
             case "description", "itunes:summary", "content:encoded":
                 if iSummary.isEmpty { iSummary = stripHTML(value) }
             case "itunes:duration": iDuration = duration(value)
@@ -123,7 +125,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
                     title: iTitle, summary: iSummary.trimmed, podcastTitle: channelTitle.trimmed,
                     colorHex: colorHex, artworkURL: iImage ?? channelImage, audioURL: iAudio,
                     duration: iDuration, publishedAt: iDate, chapters: iChapters, chaptersURL: iChaptersURL,
-                    audioBytes: iBytes
+                    audioBytes: iBytes, guid: iGuid
                 ))
                 inItem = false
             default:

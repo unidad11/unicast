@@ -65,13 +65,32 @@ enum Persistence {
     /// ninguno puede adelantar a otro y dejar en disco un estado viejo.
     private static let ioQueue = DispatchQueue(label: "com.jbs.Unicast.persistence", qos: .utility)
 
+    /// Último estado pendiente de escribir. Si llegan treinta guardados seguidos (y llegan: uno
+    /// por cada descarga terminada y uno por cada episodio que rota fuera del límite), solo importa
+    /// el último: todos escriben el MISMO archivo. Sin esto se codificaban y escribían los 10 MB
+    /// treinta veces para dejar exactamente el mismo resultado.
+    private static var pendingState: AppState?
+    private static let pendingLock = NSLock()
+
     /// El estado que se pasa es una copia por valor, así que se puede escribir tranquilamente
     /// mientras el store sigue cambiando.
     static func save(_ state: AppState) {
-        ioQueue.async {
-            guard let data = try? JSONEncoder().encode(state) else { return }
-            try? data.write(to: fileURL, options: .atomic)
-        }
+        pendingLock.lock()
+        let alreadyScheduled = pendingState != nil
+        pendingState = state
+        pendingLock.unlock()
+        guard !alreadyScheduled else { return }   // ya hay una escritura en camino; se llevará este
+        ioQueue.async { writePending() }
+    }
+
+    /// Escribe lo último que haya pendiente, sea de quien sea.
+    private static func writePending() {
+        pendingLock.lock()
+        let state = pendingState
+        pendingState = nil
+        pendingLock.unlock()
+        guard let state, let data = try? JSONEncoder().encode(state) else { return }
+        try? data.write(to: fileURL, options: .atomic)
     }
 
     /// Espera a que termine todo lo que haya pendiente de escribir. Hay que llamarlo al mandar la
@@ -79,17 +98,37 @@ enum Persistence {
     /// ese guardado se pierde.
     static func flush() {
         ioQueue.sync { }
+        // Puede haber entrado un estado nuevo mientras se escribía el anterior: ese todavía no
+        // tiene escritura en camino, así que hay que forzarla y esperarla también.
+        pendingLock.lock()
+        let stillPending = pendingState != nil
+        pendingLock.unlock()
+        if stillPending { ioQueue.sync { writePending() } }
     }
 
-    /// Devuelve nil en dos casos MUY distintos: no hay archivo todavía (instalación nueva) o el
-    /// que hay no se puede leer ni siquiera con la decodificación tolerante. En el segundo caso
-    /// el archivo se APARTA con la fecha en el nombre en vez de dejar que lo pise la biblioteca
-    /// de ejemplo: si algún día hay forma de rescatarlo, seguirá ahí.
-    static func load() -> AppState? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        if let state = try? JSONDecoder().decode(AppState.self, from: data) { return state }
+    /// Qué pasó al intentar cargar. Son tres casos MUY distintos y antes se devolvía `nil` para
+    /// los tres, que es lo que hacía que un fallo pasajero de lectura acabara con la biblioteca de
+    /// ejemplo escrita ENCIMA de los 25 podcasts del usuario.
+    enum LoadResult {
+        /// Se cargó bien.
+        case loaded(AppState)
+        /// No hay archivo: instalación nueva. Aquí sí vale empezar con datos de ejemplo.
+        case fresh
+        /// HAY archivo pero no se pudo leer. Nunca, jamás, escribir encima.
+        case unreadable
+    }
+
+    /// Un JSON ilegible se APARTA con la fecha en el nombre (por si algún día hay forma de
+    /// rescatarlo). Un error de LECTURA, en cambio, no se toca: el archivo puede estar
+    /// perfectamente bien y ser el sistema el que no deja leerlo todavía — pasa de verdad cuando
+    /// iOS lanza la app en segundo plano tras un reinicio, antes del primer desbloqueo, con la
+    /// protección de datos aún cerrada. Ahí lo correcto es no hacer nada y reintentar luego.
+    static func load() -> LoadResult {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return .fresh }
+        guard let data = try? Data(contentsOf: fileURL) else { return .unreadable }
+        if let state = try? JSONDecoder().decode(AppState.self, from: data) { return .loaded(state) }
         quarantineCorruptFile()
-        return nil
+        return .fresh   // el original está a salvo apartado; ya se puede empezar de cero
     }
 
     /// Mueve el archivo ilegible a un lado (unicast_state_corrupto_<fecha>.json).

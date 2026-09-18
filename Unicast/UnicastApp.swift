@@ -35,6 +35,10 @@ struct UnicastApp: App {
                                       durationSeconds: Date().timeIntervalSince(start),
                                       networkSeconds: summary.networkSeconds,
                                       fastestDetectionSeconds: summary.fastestDetectionSeconds))
+            // Con el guardado en una cola aparte, terminar aquí sin esperar significa que iOS
+            // puede suspender el proceso con los 10 MB a medio escribir — y se perdería justo el
+            // refresco nocturno, que es el que importa.
+            Persistence.flush()
         }
         // Disparo desde la automatización de Atajos (RefreshPodcastsIntent). No toca nada si hay
         // audio sonando: no vale la pena arriesgarse a cortar la reproducción por adelantar un
@@ -52,6 +56,7 @@ struct UnicastApp: App {
                                       durationSeconds: Date().timeIntervalSince(start),
                                       networkSeconds: summary.networkSeconds,
                                       fastestDetectionSeconds: summary.fastestDetectionSeconds))
+            Persistence.flush()   // ver arriba: no terminar con el guardado a medias
         }
         // Estas tres tienen que estar listas ANTES de que iOS pueda despertar la app en segundo
         // plano puro (sin montar ninguna pantalla) — por eso van aquí y no en `.onAppear`, que NO
@@ -185,5 +190,6 @@ struct UnicastApp: App {
                                   durationSeconds: Date().timeIntervalSince(start),
                                   networkSeconds: summary.networkSeconds,
                                   fastestDetectionSeconds: summary.fastestDetectionSeconds))
+        Persistence.flush()   // ver onProcessingTask: no terminar con el guardado a medias
     }
 }

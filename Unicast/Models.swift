@@ -63,7 +63,9 @@ struct Podcast: Identifiable, Hashable, Codable {
     /// costar el podcast entero, y menos aún la biblioteca completa.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = c.lenient(.id, or: UUID())
+        // Ver `Episode.init(from:)`: el id no puede inventarse. El de un podcast enlaza además con
+        // las listas inteligentes (`sourcePodcastOrder`).
+        id = try c.decode(UUID.self, forKey: .id)
         title = c.lenient(.title, or: "")
         author = c.lenient(.author, or: "")
         summary = c.lenient(.summary, or: "")
@@ -125,12 +127,18 @@ struct Episode: Identifiable, Hashable, Codable {
     /// ventana de segundo plano que hace falta para los episodios que sí existen.
     var downloadFailures: Int
     var lastDownloadFailureAt: Date?
+    /// El `<guid>` del feed: el identificador que el autor le da al episodio y que no cambia
+    /// aunque corrija el título. Hasta ahora la identidad era el TÍTULO, y eso tenía dos fallos
+    /// silenciosos: si el autor corregía una errata, el episodio entraba otra vez como nuevo y se
+    /// volvía a descargar entero; y si dos episodios compartían título (un "Bonus", un "Especial"),
+    /// el segundo se descartaba para siempre sin decir nada.
+    var guid: String?
 
     init(id: UUID = UUID(), title: String, summary: String = "", podcastTitle: String,
          colorHex: String, artworkURL: URL? = nil, audioURL: URL? = nil, duration: TimeInterval, publishedAt: Date,
          isDownloaded: Bool = false, isPlayed: Bool = false, playbackPosition: TimeInterval = 0, chapters: [Chapter] = [],
          chaptersURL: URL? = nil, manuallyDownloaded: Bool = false, audioBytes: Int64? = nil,
-         downloadFailures: Int = 0, lastDownloadFailureAt: Date? = nil) {
+         downloadFailures: Int = 0, lastDownloadFailureAt: Date? = nil, guid: String? = nil) {
         self.id = id
         self.title = title
         self.summary = summary
@@ -149,13 +157,14 @@ struct Episode: Identifiable, Hashable, Codable {
         self.audioBytes = audioBytes
         self.downloadFailures = downloadFailures
         self.lastDownloadFailureAt = lastDownloadFailureAt
+        self.guid = guid
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, podcastTitle, colorHex, artworkURL, audioURL
         case duration, publishedAt, isDownloaded, isPlayed, playbackPosition
         case chapters, chaptersURL, manuallyDownloaded, audioBytes
-        case downloadFailures, lastDownloadFailureAt
+        case downloadFailures, lastDownloadFailureAt, guid
     }
 
     /// Carga tolerante (ver `AppState.init(from:)`). `publishedAt` cae a `distantPast` a propósito
@@ -163,7 +172,12 @@ struct Episode: Identifiable, Hashable, Codable {
     /// colarse dentro y provocar descargas que nadie pidió.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = c.lenient(.id, or: UUID())
+        // El id es lo ÚNICO que no puede caer a un valor por defecto. El nombre del mp3 en disco
+        // es ese id: inventarle uno nuevo dejaba el audio huérfano (y la limpieza lo borraba),
+        // marcaba el episodio como descargado sin estarlo y forzaba bajarlo otra vez entero. Si no
+        // se puede leer, este episodio se descarta —`lenientArray` lo salta sin romper el resto—
+        // en vez de resucitarlo con una identidad falsa.
+        id = try c.decode(UUID.self, forKey: .id)
         title = c.lenient(.title, or: "")
         summary = c.lenient(.summary, or: "")
         podcastTitle = c.lenient(.podcastTitle, or: "")
@@ -181,6 +195,7 @@ struct Episode: Identifiable, Hashable, Codable {
         audioBytes = c.lenientOptional(Int64.self, .audioBytes)
         downloadFailures = c.lenient(.downloadFailures, or: 0)
         lastDownloadFailureAt = c.lenientOptional(Date.self, .lastDownloadFailureAt)
+        guid = c.lenientOptional(String.self, .guid)
     }
 
     /// Tiempo que falta para terminar, en segundos.
