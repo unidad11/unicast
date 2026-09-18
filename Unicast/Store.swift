@@ -626,38 +626,62 @@ final class AppStore {
         updated.summary = fresh.summary.isEmpty ? updated.summary : fresh.summary
         updated.artworkURL = fresh.artworkURL ?? updated.artworkURL
 
-        // Índices de lo que ya está guardado: por identificador del feed (lo estable) y por título
-        // (el respaldo de siempre, para los feeds que no traen <guid>).
-        var indexByGuid: [String: Int] = [:]
-        var indexByTitle: [String: Int] = [:]
-        for (position, episode) in updated.episodes.enumerated() {
-            if let guid = episode.guid, indexByGuid[guid] == nil { indexByGuid[guid] = position }
-            if indexByTitle[episode.title] == nil { indexByTitle[episode.title] = position }
+        // ---- Paso 1: traspaso ----
+        // Lo que ya estaba guardado es de antes de que se leyeran los <guid>, así que no tiene
+        // identificador. A cada uno se le empareja el capítulo del feed con su MISMO título y la
+        // fecha MÁS CERCANA, uno a uno y sin repetir.
+        //
+        // Lo de la fecha no es un detalle: hay programas que reciclan el mismo título cada pocos
+        // meses. Le pasa de verdad a "Todo por la radio" de la SER, que el 15/09/2026 publicó un
+        // capítulo con el título exacto de otro del 07/07/2026. Emparejando solo por título, el de
+        // septiembre le habría robado la identidad al de julio y el audio de julio habría acabado
+        // colgando del capítulo equivocado.
+        var freshByTitle: [String: [Int]] = [:]
+        for (position, episode) in fresh.episodes.enumerated() where episode.guid != nil {
+            freshByTitle[episode.title, default: []].append(position)
+        }
+        var claimed = Set<Int>()
+        for position in updated.episodes.indices where updated.episodes[position].guid == nil {
+            let stored = updated.episodes[position]
+            var best: Int?
+            var bestDistance = Double.greatestFiniteMagnitude
+            for candidate in freshByTitle[stored.title] ?? [] where !claimed.contains(candidate) {
+                let distance = abs(fresh.episodes[candidate].publishedAt.timeIntervalSince(stored.publishedAt))
+                if distance < bestDistance { bestDistance = distance; best = candidate }
+            }
+            guard let best else { continue }
+            claimed.insert(best)
+            updated.episodes[position].guid = fresh.episodes[best].guid
         }
 
+        // ---- Paso 2: qué es nuevo de verdad ----
+        var indexByGuid: [String: Int] = [:]
+        var knownTitles = Set<String>()
+        for (position, episode) in updated.episodes.enumerated() {
+            if let guid = episode.guid, indexByGuid[guid] == nil { indexByGuid[guid] = position }
+            knownTitles.insert(episode.title)
+        }
         var newEpisodes: [Episode] = []
+        var addedGuids = Set<String>()
         for incoming in fresh.episodes {
-            // 1) Lo conocemos por su identificador: es el mismo episodio aunque le hayan cambiado
-            //    el título. Antes esto entraba como capítulo nuevo y se volvía a descargar entero.
-            if let guid = incoming.guid, let position = indexByGuid[guid] {
-                adopt(incoming, into: &updated.episodes[position])
-                continue
+            if let guid = incoming.guid {
+                // El identificador manda: si ya lo tenemos es el mismo capítulo, aunque le hayan
+                // cambiado el título (antes eso lo hacía entrar otra vez y se re-descargaba entero).
+                if let position = indexByGuid[guid] {
+                    adopt(incoming, into: &updated.episodes[position])
+                    continue
+                }
+                guard !addedGuids.contains(guid) else { continue }   // el feed lo repite: una vez
+                addedGuids.insert(guid)
+                // Nuevo aunque su título coincida con otro que ya teníamos: son dos capítulos
+                // distintos con el mismo nombre, y el segundo se venía descartando en silencio.
+                newEpisodes.append(incoming)
+            } else {
+                // Feed que no da identificadores: se compara por título, como siempre.
+                if knownTitles.contains(incoming.title) { continue }
+                knownTitles.insert(incoming.title)
+                newEpisodes.append(incoming)
             }
-            // 2) Traspaso: lo guardado es de antes de que se leyeran los <guid>, así que todavía no
-            //    tiene ninguno. Si el título coincide es el mismo episodio: se le adopta el
-            //    identificador y a partir de ahora ya no depende del título para nada.
-            if let position = indexByTitle[incoming.title], updated.episodes[position].guid == nil {
-                updated.episodes[position].guid = incoming.guid
-                if let guid = incoming.guid { indexByGuid[guid] = position }
-                adopt(incoming, into: &updated.episodes[position])
-                continue
-            }
-            // 3) El feed no da identificador y el título ya lo habíamos visto: se da por conocido.
-            if incoming.guid == nil, indexByTitle[incoming.title] != nil { continue }
-            // 4) Nuevo de verdad. Ojo: aquí entra también un episodio cuyo título coincide con otro
-            //    que YA tiene un identificador distinto — dos capítulos llamados igual ("Bonus",
-            //    "Especial"). Antes el segundo se descartaba en silencio y no se bajaba jamás.
-            newEpisodes.append(incoming)
         }
 
         updated.episodes = newEpisodes + updated.episodes   // los nuevos, primero
