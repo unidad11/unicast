@@ -104,7 +104,10 @@ struct Episode: Identifiable, Hashable, Codable {
     var duration: TimeInterval     // duración total en segundos
     var publishedAt: Date
     var isDownloaded: Bool
-    var isPlayed: Bool              // ya escuchado: no reaparece en "Todos"
+    /// Ya escuchado (o descartado a mano deslizando). NO lo esconde de la pestaña "Todos": sigue
+    /// saliendo, atenuado. Lo que hace es dejarlo fuera de la auto-descarga, para que un episodio
+    /// que ya has oído no vuelva a bajarse solo. Se deshace deslizando → "Pendiente".
+    var isPlayed: Bool
     var playbackPosition: TimeInterval  // dónde se quedó, para retomar (puntos 11 y 12)
     var chapters: [Chapter]
     var chaptersURL: URL?    // capítulos en un JSON aparte (formato Podcasting 2.0), si el feed los trae así

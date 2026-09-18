@@ -95,7 +95,9 @@ struct UnicastApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         // Al volver a la app: refresco automático (si el último tiene >5 min).
-                        // @MainActor: evita que este refresco se cruce con un "seguir podcast" a la vez.
+                        // El aislamiento de verdad lo da `@MainActor` sobre `AppStore`, no este
+                        // `Task`: una función `async` no aislada NO hereda el actor de quien la
+                        // llama, cosa que este comentario daba por hecha y era falsa.
                         Task { @MainActor in
                             let start = Date()
                             guard let summary = await store.refreshIfStale(downloads: downloadManager) else { return }
@@ -178,8 +180,9 @@ struct UnicastApp: App {
         }
     }
 
-    /// @MainActor: el refresco en segundo plano toca `store.podcasts` igual que "seguir un podcast";
-    /// forzarlo al hilo principal evita que ambas cosas se crucen y se pisen entre sí.
+    /// Quien garantiza que esto no se cruce con nada es `@MainActor` sobre la propia clase
+    /// `AppStore`. Marcarlo aquí es solo coherencia: durante mucho tiempo estuvo SOLO aquí, y no
+    /// servía de nada porque una función `async` no aislada no hereda el actor del llamante.
     @MainActor
     private func refreshInBackground(trigger: WakeEvent.Trigger) async {
         BackgroundScheduling.scheduleAll()   // primero la siguiente cita (ver onProcessingTask)

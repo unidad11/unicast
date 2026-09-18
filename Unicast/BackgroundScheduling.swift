@@ -4,9 +4,12 @@ import BackgroundTasks
 /// Pide a iOS las "citas" en segundo plano y deja constancia de cómo fue cada intento.
 ///
 /// Antes esto se hacía con `try?` delante, así que un rechazo del sistema no lo veía nadie: la app
-/// creía haber pedido el refresco nocturno y en realidad iOS lo había tirado sin más. Justo eso es
-/// lo que pasaba cuando el bundle no declaraba los modos `fetch` y `processing` — todas las
-/// peticiones fallaban en silencio y nunca había ni un solo refresco en segundo plano.
+/// creía haber pedido el refresco nocturno sin saber si iOS lo había aceptado.
+///
+/// (Aquí decía que el bundle no declaraba `fetch` ni `processing` y que por eso fallaba todo. Es
+/// FALSO: se comprobó compilando con y sin el ajuste acusado y el .app declara los tres modos en
+/// los dos casos. El verdadero motivo de que no hubiera refresco nocturno era que nadie pedía la
+/// siguiente cita al terminar una tarea, y eso está arreglado en `UnicastApp`.)
 ///
 /// El registro va a UserDefaults, no al JSON de la biblioteca: hay que poder consultarlo en
 /// Ajustes aunque el intento haya ocurrido en un arranque en segundo plano, sin pantalla ninguna.
