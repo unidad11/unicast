@@ -24,6 +24,11 @@ final class DownloadManager: NSObject {
     @ObservationIgnored
     var onFinished: ((UUID) -> Void)?
 
+    /// Aviso de "esta descarga ha fallado". Hace falta para no reintentar eternamente una URL
+    /// muerta: quien escucha apunta el fallo en el episodio y aplica una espera creciente.
+    @ObservationIgnored
+    var onFailed: ((UUID) -> Void)?
+
     /// Qué hacer al terminar, para cada tarea de descarga lanzada con la app abierta.
     @ObservationIgnored
     private var pending: [Int: () -> Void] = [:]
@@ -35,6 +40,11 @@ final class DownloadManager: NSObject {
         let id: UUID
         let title: String
         let podcastTitle: String
+        /// ¿Avisar al terminar? Es el ajuste "Avisarme de nuevos" del podcast, que hasta ahora no
+        /// lo miraba nadie: se notificaba SIEMPRE. Viaja dentro de la tarea para que la decisión
+        /// sobreviva a que la app se cierre antes de que termine la descarga. Opcional a
+        /// propósito: las tareas ya en vuelo de la versión anterior no lo traen.
+        var notify: Bool?
     }
 
     private static func encode(_ info: TaskInfo) -> String? {
@@ -73,12 +83,16 @@ final class DownloadManager: NSObject {
     /// que iOS pueda reengancharnos a descargas que ya estaban en marcha, y repuebla la lista de
     /// "descargando ahora" preguntándole al sistema qué sigue en vuelo. Sin esto, al reabrir la app
     /// las descargas en curso no mostraban la ruedecita y se podían encolar dos veces.
-    func attachBackgroundSession() {
+    /// `completion` se llama SIEMPRE, en el hilo principal, cuando `downloading` ya refleja lo que
+    /// iOS tiene en vuelo. Importa el orden: el repaso de descargas se hacía justo después de
+    /// llamar aquí, pero `getAllTasks` responde de forma asíncrona, así que el repaso corría con la
+    /// lista todavía vacía y podía encolar por segunda vez un mp3 que ya se estaba bajando.
+    func attachBackgroundSession(completion: (() -> Void)? = nil) {
         session.getAllTasks { tasks in
             let ids = tasks.compactMap { Self.decode($0.taskDescription)?.id }
-            guard !ids.isEmpty else { return }
             DispatchQueue.main.async { [weak self] in
                 for id in ids { self?.downloading.insert(id) }
+                completion?()
             }
         }
     }
@@ -185,7 +199,8 @@ final class DownloadManager: NSObject {
     /// ajuste está puesto, y entonces iOS deja la transferencia esperando a que haya WiFi en vez
     /// de gastar datos del móvil. Las que pide el usuario a mano NUNCA lo aplican: si pulsa el
     /// botón de descargar es porque quiere ese episodio ahora, con la red que haya.
-    func download(_ episode: Episode, allowsCellular: Bool = true, completion: @escaping () -> Void) {
+    func download(_ episode: Episode, allowsCellular: Bool = true, notify: Bool = true,
+                   completion: @escaping () -> Void) {
         guard let url = episode.audioURL, !downloading.contains(episode.id) else { return }
         downloading.insert(episode.id)
         var request = URLRequest(url: url)
@@ -202,7 +217,8 @@ final class DownloadManager: NSObject {
         // que una descarga terminada de madrugada se pueda guardar en su sitio al despertar.
         task.taskDescription = Self.encode(TaskInfo(id: episode.id,
                                                     title: episode.title,
-                                                    podcastTitle: episode.podcastTitle))
+                                                    podcastTitle: episode.podcastTitle,
+                                                    notify: notify))
         pending[task.taskIdentifier] = completion
         // Se apunta la hora de ENCOLADO y si la app estaba en primer plano, que es lo que decide
         // si iOS arranca la transferencia ya o la aparca a su gusto.
@@ -252,6 +268,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
             DispatchQueue.main.async { [weak self] in
                 self?.downloading.remove(info.id)
                 self?.pending[downloadTask.taskIdentifier] = nil
+                self?.onFailed?(info.id)
             }
             return
         }
@@ -264,7 +281,9 @@ extension DownloadManager: URLSessionDownloadDelegate {
             self.downloading.remove(info.id)
             let completion = self.pending.removeValue(forKey: downloadTask.taskIdentifier)
             guard success else { return }
-            Notifications.notifyDownloaded(info.id, info.title, podcast: info.podcastTitle)
+            if info.notify ?? true {
+                Notifications.notifyDownloaded(info.id, info.title, podcast: info.podcastTitle)
+            }
             if let completion { completion() } else { self.onFinished?(info.id) }
         }
     }
@@ -277,7 +296,10 @@ extension DownloadManager: URLSessionDownloadDelegate {
             DownloadLog.finished(id, outcome: "error: \((error as NSError).localizedDescription)", bytes: nil)
         }
         DispatchQueue.main.async { [weak self] in
-            if let id = Self.decode(task.taskDescription)?.id { self?.downloading.remove(id) }
+            if let id = Self.decode(task.taskDescription)?.id {
+                self?.downloading.remove(id)
+                self?.onFailed?(id)
+            }
             self?.pending[task.taskIdentifier] = nil
         }
     }

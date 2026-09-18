@@ -145,16 +145,18 @@ final class AppStore {
 
     /// Al terminar un episodio: autoborrado (quita el audio y lo saca de Descargados → vuelve a Todos).
     func handleFinished(_ episodeID: UUID) {
-        DownloadManager.deleteFile(for: episodeID)
-        for pi in podcasts.indices {
-            if let ei = podcasts[pi].episodes.firstIndex(where: { $0.id == episodeID }) {
-                podcasts[pi].episodes[ei].isDownloaded = false
-                podcasts[pi].episodes[ei].isPlayed = true   // escuchado: desaparece de Todos
-                podcasts[pi].episodes[ei].playbackPosition = 0
-                podcasts[pi].episodes[ei].manuallyDownloaded = false
-                break
-            }
+        guard let pi = podcasts.firstIndex(where: { $0.episodes.contains { $0.id == episodeID } }),
+              let ei = podcasts[pi].episodes.firstIndex(where: { $0.id == episodeID }) else { return }
+        // "Borrar al terminar" es un ajuste POR PODCAST que estaba en la pantalla de ajustes desde
+        // el principio y no lo consultaba nadie: el audio se borraba siempre, lo tuvieras puesto o
+        // no. Si está apagado, el episodio se marca escuchado pero el archivo se queda.
+        if podcasts[pi].autoDeleteOnFinish {
+            DownloadManager.deleteFile(for: episodeID)
+            podcasts[pi].episodes[ei].isDownloaded = false
+            podcasts[pi].episodes[ei].manuallyDownloaded = false
         }
+        podcasts[pi].episodes[ei].isPlayed = true   // escuchado: desaparece de Todos
+        podcasts[pi].episodes[ei].playbackPosition = 0
         save()
     }
 
@@ -184,7 +186,30 @@ final class AppStore {
         guard let pi = podcasts.firstIndex(where: { $0.id == podcastID }),
               let ei = podcasts[pi].episodes.firstIndex(where: { $0.id == episodeID }) else { return }
         podcasts[pi].episodes[ei].isDownloaded = true
+        podcasts[pi].episodes[ei].downloadFailures = 0   // salió bien: se olvida lo anterior
+        podcasts[pi].episodes[ei].lastDownloadFailureAt = nil
         save()
+    }
+
+    /// Apunta que una descarga ha fallado, para no reintentarla sin parar.
+    func markDownloadFailed(_ episodeID: UUID) {
+        for pi in podcasts.indices {
+            if let ei = podcasts[pi].episodes.firstIndex(where: { $0.id == episodeID }) {
+                podcasts[pi].episodes[ei].downloadFailures += 1
+                podcasts[pi].episodes[ei].lastDownloadFailureAt = Date()
+                save()
+                return
+            }
+        }
+    }
+
+    /// ¿Toca esperar antes de volver a intentar este episodio? La espera se dobla con cada fallo
+    /// (1 h, 2 h, 4 h...) y se queda en 24 h como mucho. Así una URL muerta se intenta una vez al
+    /// día en vez de quince, pero si el servidor vuelve, el episodio se recupera solo.
+    private func waitingAfterFailure(_ episode: Episode) -> Bool {
+        guard episode.downloadFailures > 0, let last = episode.lastDownloadFailureAt else { return false }
+        let hours = min(pow(2.0, Double(episode.downloadFailures - 1)), 24)
+        return Date().timeIntervalSince(last) < hours * 3600
     }
 
     /// Apunta que esta descarga la ha pedido el usuario a mano (botón de descargar en "Todos").
@@ -315,6 +340,9 @@ final class AppStore {
     func subscribe(_ podcast: Podcast, downloads: DownloadManager) {
         guard !podcasts.contains(where: { $0.title == podcast.title }) else { return }
         var fresh = podcast
+        // El límite elegido en Ajustes → "Guardar por defecto". Estaba ahí desde el principio y no
+        // se aplicaba en ningún sitio: todo podcast nuevo se quedaba con los 5 de fábrica.
+        fresh.downloadLimit = defaultDownloadLimit
         // Fecha de alta = corte. Se bajan los 4 más recientes (base) y, de ahí en adelante,
         // lo que se publique. NUNCA el histórico anterior a esa fecha.
         let byNewest = fresh.episodes.sorted { $0.publishedAt > $1.publishedAt }
@@ -342,8 +370,9 @@ final class AppStore {
         // marcar una descarga de la noche (el caso que arregla el bug de arriba, en versiones
         // futuras si volviera a colarse uno parecido), sin este chequeo se re-descargaría el
         // mismo mp3 entero en cada refresco, varias veces al día.
-        for ep in keep where !ep.isDownloaded && !ep.isPlayed && !DownloadManager.isDownloaded(ep.id) {
-            downloads.download(ep, allowsCellular: !wifiOnlyDownloads) { [weak self] in
+        for ep in keep
+        where !ep.isDownloaded && !ep.isPlayed && !DownloadManager.isDownloaded(ep.id) && !waitingAfterFailure(ep) {
+            downloads.download(ep, allowsCellular: !wifiOnlyDownloads, notify: podcast.notifyNew) { [weak self] in
                 self?.markDownloaded(ep.id, in: podcastID)
             }
         }
@@ -594,8 +623,30 @@ final class AppStore {
         guard !episodes.isEmpty else { return }
         for index in playlists.indices
         where playlists[index].isSmart && playlists[index].sourcePodcastOrder.contains(podcastID) {
-            playlists[index].episodeIDs.append(contentsOf: episodes.map(\.id))
+            playlists[index].episodeIDs.insert(contentsOf: episodes.map(\.id),
+                                               at: insertionPoint(in: playlists[index], for: podcastID))
         }
+    }
+
+    /// Dónde colocar un episodio nuevo dentro de una lista inteligente.
+    ///
+    /// La promesa era que el orden en que el usuario colocó los podcasts (`sourcePodcastOrder`)
+    /// decide la prioridad, y que un episodio nuevo entra en el sitio de SU podcast. En realidad
+    /// ese orden solo se usaba para saber qué podcasts pertenecían a la lista, y todo lo nuevo se
+    /// añadía al final: el campo podía haber sido un conjunto y nada habría cambiado.
+    ///
+    /// Aquí se busca el primer episodio de la lista cuyo podcast vaya DESPUÉS que este en el orden,
+    /// y se coloca justo delante. Si no hay ninguno, va al final.
+    private func insertionPoint(in playlist: Playlist, for podcastID: UUID) -> Int {
+        guard let rank = playlist.sourcePodcastOrder.firstIndex(of: podcastID) else {
+            return playlist.episodeIDs.count
+        }
+        for (position, episodeID) in playlist.episodeIDs.enumerated() {
+            guard let owner = podcasts.first(where: { $0.episodes.contains { $0.id == episodeID } }),
+                  let otherRank = playlist.sourcePodcastOrder.firstIndex(of: owner.id) else { continue }
+            if otherRank > rank { return position }
+        }
+        return playlist.episodeIDs.count
     }
 
     /// Busca un episodio por su id en toda la biblioteca.

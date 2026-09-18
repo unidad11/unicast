@@ -118,11 +118,19 @@ struct Episode: Identifiable, Hashable, Codable {
     /// antojo. Sin esta cifra, para el planificador son transferencias de tamaño DESCONOCIDO, que es
     /// el peor caso posible. Venía gratis en el feed y se estaba tirando.
     var audioBytes: Int64?
+    /// Cuántas veces seguidas ha fallado la descarga de este episodio, y cuándo fue la última.
+    ///
+    /// Sin esto, un episodio cuya URL está muerta (404, servidor que ya no existe) se volvía a
+    /// intentar en CADA refresco: unas quince veces al día, para siempre, gastando datos y la
+    /// ventana de segundo plano que hace falta para los episodios que sí existen.
+    var downloadFailures: Int
+    var lastDownloadFailureAt: Date?
 
     init(id: UUID = UUID(), title: String, summary: String = "", podcastTitle: String,
          colorHex: String, artworkURL: URL? = nil, audioURL: URL? = nil, duration: TimeInterval, publishedAt: Date,
          isDownloaded: Bool = false, isPlayed: Bool = false, playbackPosition: TimeInterval = 0, chapters: [Chapter] = [],
-         chaptersURL: URL? = nil, manuallyDownloaded: Bool = false, audioBytes: Int64? = nil) {
+         chaptersURL: URL? = nil, manuallyDownloaded: Bool = false, audioBytes: Int64? = nil,
+         downloadFailures: Int = 0, lastDownloadFailureAt: Date? = nil) {
         self.id = id
         self.title = title
         self.summary = summary
@@ -139,12 +147,15 @@ struct Episode: Identifiable, Hashable, Codable {
         self.chaptersURL = chaptersURL
         self.manuallyDownloaded = manuallyDownloaded
         self.audioBytes = audioBytes
+        self.downloadFailures = downloadFailures
+        self.lastDownloadFailureAt = lastDownloadFailureAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, podcastTitle, colorHex, artworkURL, audioURL
         case duration, publishedAt, isDownloaded, isPlayed, playbackPosition
         case chapters, chaptersURL, manuallyDownloaded, audioBytes
+        case downloadFailures, lastDownloadFailureAt
     }
 
     /// Carga tolerante (ver `AppState.init(from:)`). `publishedAt` cae a `distantPast` a propósito
@@ -168,6 +179,8 @@ struct Episode: Identifiable, Hashable, Codable {
         chaptersURL = c.lenientOptional(URL.self, .chaptersURL)
         manuallyDownloaded = c.lenient(.manuallyDownloaded, or: false)
         audioBytes = c.lenientOptional(Int64.self, .audioBytes)
+        downloadFailures = c.lenient(.downloadFailures, or: 0)
+        lastDownloadFailureAt = c.lenientOptional(Date.self, .lastDownloadFailureAt)
     }
 
     /// Tiempo que falta para terminar, en segundos.

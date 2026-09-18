@@ -6,6 +6,15 @@ struct PodcastCover: View {
     let podcast: Podcast
     var size: CGFloat = 80
     var showTitle: Bool = true
+    /// Contador de episodios nuevos en la esquina. Lo enciende el ajuste "Contador de nuevos en
+    /// pósters", que llevaba desde el principio moviendo una variable que no leía nadie: el
+    /// interruptor estaba, el contador no se había dibujado nunca.
+    var showNewBadge: Bool = false
+
+    /// Nuevo = descargado y todavía sin escuchar (el mismo criterio del saludo de la portada).
+    private var newCount: Int {
+        podcast.episodes.filter { $0.isDownloaded && !$0.isPlayed }.count
+    }
 
     var body: some View {
         Group {
@@ -21,6 +30,19 @@ struct PodcastCover: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.21, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            if showNewBadge && newCount > 0 {
+                Text("\(newCount)")
+                    .font(.system(size: max(9, size * 0.14), weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, size * 0.07)
+                    .padding(.vertical, size * 0.03)
+                    .background(Theme.accent, in: Capsule())
+                    .overlay(Capsule().stroke(.white, lineWidth: max(1, size * 0.02)))
+                    .offset(x: size * 0.08, y: -size * 0.08)
+                    .accessibilityLabel("\(newCount) episodios nuevos")
+            }
+        }
     }
 
     private var colorBlock: some View {
@@ -125,6 +147,7 @@ struct MiniPlayer: View {
 /// Celda de la vista "Mazos": portada del podcast con cartas asomando por detrás
 /// cuando tiene varios episodios (estilo Brink). Nombre en fuente con carácter.
 struct PodcastDeck: View {
+    @Environment(AppStore.self) private var store
     let podcast: Podcast
     @State private var bob = false
     private var hasSeveral: Bool { podcast.episodes.count > 1 }
@@ -136,7 +159,7 @@ struct PodcastDeck: View {
                     card.rotationEffect(.degrees(-9)).offset(x: -14, y: -6)
                     card.rotationEffect(.degrees(9)).offset(x: 14, y: -6)
                 }
-                PodcastCover(podcast: podcast, size: 104)
+                PodcastCover(podcast: podcast, size: 104, showNewBadge: store.showNewCountBadges)
                     .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 10)
             }
             .frame(height: 122)
@@ -163,11 +186,12 @@ struct PodcastDeck: View {
 
 /// Fila de la vista "Lista": portada pequeña, nombre y autor.
 struct PodcastListRow: View {
+    @Environment(AppStore.self) private var store
     let podcast: Podcast
 
     var body: some View {
         HStack(spacing: 12) {
-            PodcastCover(podcast: podcast, size: 50)
+            PodcastCover(podcast: podcast, size: 50, showNewBadge: store.showNewCountBadges)
             VStack(alignment: .leading, spacing: 2) {
                 Text(podcast.title)
                     .font(.system(size: 14, weight: .semibold))

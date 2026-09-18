@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var path: [SettingsRoute] = []
     @State private var opmlURL: URL?
+    @State private var showImporter = false
 
     var body: some View {
         @Bindable var store = store
@@ -45,7 +46,12 @@ struct SettingsView: View {
                     .listRowBackground(Theme.surface)
 
                     Section("Tus podcasts") {
-                        Label("Importar OPML", systemImage: "square.and.arrow.down")
+                        // Esta fila era un Label suelto: no hacía NADA al tocarla, aunque la
+                        // importación existía y funcionaba escondida en Buscar → Añadir podcast.
+                        Button { showImporter = true } label: {
+                            Label("Importar OPML", systemImage: "square.and.arrow.down")
+                                .foregroundStyle(Theme.textPrimary)
+                        }
                         if let opmlURL {
                             ShareLink(item: opmlURL) {
                                 Label("Exportar OPML", systemImage: "square.and.arrow.up")
@@ -70,6 +76,7 @@ struct SettingsView: View {
                 }
             }
             .task { opmlURL = OPMLExporter.writeTempFile(from: store.podcasts) }
+            .sheet(isPresented: $showImporter) { AddPodcastView() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) { Button("Cerrar") { dismiss() } }
             }

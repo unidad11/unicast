@@ -59,11 +59,11 @@ struct UnicastApp: App {
         // que terminaba de madrugada se guardaba bien en disco pero nunca se marcaba como
         // descargada, así que el siguiente refresco la volvía a bajar ENTERA — y así una y otra
         // vez, varias veces al día, hasta que el usuario abría la app a mano y `.onAppear` corría.
-        downloadManager.attachBackgroundSession()
         downloadManager.onFinished = { id in
             store.markDownloaded(id)
             store.save()
         }
+        downloadManager.onFailed = { id in store.markDownloadFailed(id) }
         // El orden importa: primero se rescata el audio que quedara en la carpeta vieja (Caches)
         // y se tiran los restos de descargas fallidas, y SOLO DESPUÉS se repasa qué hay en disco.
         // Al revés —que es como estaba, con esto en `.onAppear`— el repaso daba por perdidos
@@ -71,7 +71,12 @@ struct UnicastApp: App {
         // volvía a bajar enteros.
         DownloadManager.migrateLegacyFiles()
         DownloadManager.cleanUpInvalidFiles()
-        store.reconcileDownloads(using: downloadManager)
+        // El repaso espera a saber qué tiene iOS en vuelo. Antes se lanzaba justo después de pedir
+        // la lista, que llega de forma asíncrona, así que corría con la lista vacía y podía encolar
+        // por segunda vez un mp3 que ya se estaba bajando.
+        downloadManager.attachBackgroundSession {
+            store.reconcileDownloads(using: downloadManager)
+        }
     }
 
     var body: some Scene {
