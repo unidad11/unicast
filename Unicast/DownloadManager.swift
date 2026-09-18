@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// Descarga el audio de los episodios a disco usando la sesión "en segundo plano" de iOS: la
 /// transferencia la gestiona el propio sistema operativo, así que sigue en marcha aunque la app
@@ -190,13 +191,34 @@ final class DownloadManager: NSObject {
         var request = URLRequest(url: url)
         request.allowsCellularAccess = allowsCellular
         let task = session.downloadTask(with: request)
+        // Cuánto va a pesar esto. Apple lo pide expresamente en el SDK ("the system uses this to
+        // optimize the scheduling of URL session tasks (...) developers are strongly encouraged to
+        // provide an approximate upper bound"), y es la ÚNICA influencia que tiene la app sobre
+        // cuándo decide iOS arrancar una transferencia en segundo plano — que es exactamente lo
+        // que hace que un episodio detectado a la 1:00 no esté en el móvil hasta las 7:00. Sin
+        // esto, para el planificador son descargas de tamaño desconocido.
+        if let bytes = episode.audioBytes { task.countOfBytesClientExpectsToReceive = bytes }
         // La identidad del episodio viaja DENTRO de la tarea, no solo en memoria: es lo que hace
         // que una descarga terminada de madrugada se pueda guardar en su sitio al despertar.
         task.taskDescription = Self.encode(TaskInfo(id: episode.id,
                                                     title: episode.title,
                                                     podcastTitle: episode.podcastTitle))
         pending[task.taskIdentifier] = completion
+        // Se apunta la hora de ENCOLADO y si la app estaba en primer plano, que es lo que decide
+        // si iOS arranca la transferencia ya o la aparca a su gusto.
+        let foreground = Self.isForeground()
+        DownloadLog.queued(DownloadEvent(episodeID: episode.id, title: episode.title,
+                                          podcastTitle: episode.podcastTitle, queuedAt: Date(),
+                                          foreground: foreground, expectedBytes: episode.audioBytes))
         task.resume()
+    }
+
+    /// ¿Está la app en primer plano ahora mismo? Se consulta sin bloquear: si la llamada llega
+    /// desde fuera del hilo principal (un refresco en segundo plano), se da por segundo plano, que
+    /// es además lo correcto en ese caso.
+    private static func isForeground() -> Bool {
+        guard Thread.isMainThread else { return false }
+        return UIApplication.shared.applicationState == .active
     }
 
     /// Borra el audio descargado de un episodio (al escucharlo y autoborrarlo, etc.).
@@ -213,7 +235,12 @@ extension DownloadManager: URLSessionDownloadDelegate {
         // que solo vive en memoria: cuando iOS terminaba una descarga con la app cerrada (el caso
         // de las descargas nocturnas), esa lista estaba vacía y el archivo recién bajado se
         // descartaba aquí mismo. Se gastaban los datos y el episodio seguía sin descargar.
-        guard let info = Self.decode(downloadTask.taskDescription) else { return }
+        guard let info = Self.decode(downloadTask.taskDescription) else {
+            // Sin ficha no se sabe de qué episodio era, pero hay que soltar la entrada de `pending`
+            // igualmente: era el único final que la dejaba colgada para siempre.
+            DispatchQueue.main.async { [weak self] in self?.pending[downloadTask.taskIdentifier] = nil }
+            return
+        }
         // Un 404 o un "servidor caído" también llega hasta aquí, con la página de error como
         // contenido. Sin esta comprobación se guardaba como si fuera el episodio y quedaba
         // marcado "Descargado" un archivo de 77 bytes que no suena.
@@ -221,6 +248,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
         let attributes = try? FileManager.default.attributesOfItem(atPath: location.path)
         let size = (attributes?[.size] as? Int64) ?? 0
         guard (200...299).contains(status), size >= Self.minimumValidSize else {
+            DownloadLog.finished(info.id, outcome: "descartada (HTTP \(status), \(size) bytes)", bytes: size)
             DispatchQueue.main.async { [weak self] in
                 self?.downloading.remove(info.id)
                 self?.pending[downloadTask.taskIdentifier] = nil
@@ -230,6 +258,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
         let destination = DownloadManager.localURL(for: info.id)
         try? FileManager.default.removeItem(at: destination)
         let success = (try? FileManager.default.moveItem(at: location, to: destination)) != nil
+        DownloadLog.finished(info.id, outcome: success ? "guardada" : "fallo al guardar", bytes: size)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.downloading.remove(info.id)
@@ -243,7 +272,10 @@ extension DownloadManager: URLSessionDownloadDelegate {
     /// Si la descarga falla (sin red, error del servidor...), limpia el estado para no dejarla
     /// marcada como "descargando" para siempre.
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard error != nil else { return }
+        guard let error else { return }
+        if let id = Self.decode(task.taskDescription)?.id {
+            DownloadLog.finished(id, outcome: "error: \((error as NSError).localizedDescription)", bytes: nil)
+        }
         DispatchQueue.main.async { [weak self] in
             if let id = Self.decode(task.taskDescription)?.id { self?.downloading.remove(id) }
             self?.pending[task.taskIdentifier] = nil

@@ -16,6 +16,7 @@ struct DownloadDiagnosticsView: View {
     @State private var pending: [PendingDownload] = []
     @State private var wakes: [WakeEvent] = []
     @State private var attempts: [BackgroundScheduling.Attempt] = []
+    @State private var downloadEvents: [DownloadEvent] = []
     @State private var justAsked = false
 
     var body: some View {
@@ -27,6 +28,7 @@ struct DownloadDiagnosticsView: View {
                 bundleSection
                 scheduleSection
                 pendingSection
+                downloadSection
                 wakeSection
             }
             .listStyle(.insetGrouped)
@@ -45,6 +47,7 @@ struct DownloadDiagnosticsView: View {
         pending = store.pendingDownloads()
         wakes = Array(WakeLog.load().suffix(20).reversed())   // el más reciente arriba
         attempts = BackgroundScheduling.lastAttempts
+        downloadEvents = Array(DownloadLog.load().suffix(20).reversed())
     }
 
     // MARK: - ¿Nos despierta iOS?
@@ -168,6 +171,60 @@ struct DownloadDiagnosticsView: View {
             Text("Al pedirlo tú no se aplica «Descargar solo con WiFi»: se baja con la red que haya.")
         }
         .listRowBackground(Theme.surface)
+    }
+
+    // MARK: - Descargas: cuánto las tiene iOS aparcadas
+
+    /// La sección que zanja la discusión. Si pone "encolada 01:00 · terminada 07:12", la descarga
+    /// se pidió a su hora y quien la tuvo seis horas parada fue iOS. Si pone "encolada 07:10", el
+    /// problema es de la app y está en otro sitio.
+    private var downloadSection: some View {
+        Section {
+            if downloadEvents.isEmpty {
+                Text("Todavía no hay ninguna descarga registrada. Aparecerán aquí a partir de ahora.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+            ForEach(downloadEvents) { event in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(event.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary).lineLimit(2)
+                    Text("\(event.podcastTitle) · pedida \(event.foreground ? "con la app abierta" : "en segundo plano")")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    HStack(spacing: 6) {
+                        Text("encolada \(timestamp(event.queuedAt))")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        if let finishedAt = event.finishedAt {
+                            Text("· terminada \(timestamp(finishedAt))")
+                                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        } else {
+                            Text("· todavía en marcha")
+                                .font(.system(size: 11)).foregroundStyle(Theme.accent)
+                        }
+                    }
+                    if let wait = event.waitSeconds {
+                        Text(waitLabel(wait))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(wait > 30 * 60 ? Color(hex: "D23A39") : Theme.downloaded)
+                    }
+                    if let outcome = event.outcome, outcome != "guardada" {
+                        Text(outcome).font(.system(size: 11)).foregroundStyle(Color(hex: "D23A39"))
+                    }
+                }
+            }
+        } header: {
+            Text("Últimas descargas")
+        } footer: {
+            Text("La diferencia entre las dos horas es lo que iOS tuvo la descarga aparcada. Con la "
+                 + "app cerrada el sistema decide cuándo la arranca, y eso no se puede forzar.")
+        }
+        .listRowBackground(Theme.surface)
+    }
+
+    private func waitLabel(_ seconds: Double) -> String {
+        if seconds < 90 { return "arrancó enseguida (\(Int(seconds)) s)" }
+        if seconds < 3600 { return "iOS la tuvo parada \(Int(seconds / 60)) min" }
+        return String(format: "iOS la tuvo parada %.1f h", seconds / 3600)
     }
 
     // MARK: - Historial de despertares

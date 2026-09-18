@@ -110,11 +110,19 @@ struct Episode: Identifiable, Hashable, Codable {
     /// descargas NO puede tocar estos: si alguien se baja un capítulo viejo a propósito para el
     /// avión, el siguiente refresco no se lo puede borrar por "no entrar en los 5 últimos".
     var manuallyDownloaded: Bool
+    /// Cuántos bytes dice el feed que ocupa el audio (atributo `length` del `<enclosure>`).
+    ///
+    /// No es decoración: es el único dato con el que se puede responder a iOS cuánto va a pesar una
+    /// descarga. Apple insiste en el propio SDK en que el sistema usa esa cifra "para optimizar la
+    /// planificación de las tareas", y las descargas nocturnas son justo las que iOS planifica a su
+    /// antojo. Sin esta cifra, para el planificador son transferencias de tamaño DESCONOCIDO, que es
+    /// el peor caso posible. Venía gratis en el feed y se estaba tirando.
+    var audioBytes: Int64?
 
     init(id: UUID = UUID(), title: String, summary: String = "", podcastTitle: String,
          colorHex: String, artworkURL: URL? = nil, audioURL: URL? = nil, duration: TimeInterval, publishedAt: Date,
          isDownloaded: Bool = false, isPlayed: Bool = false, playbackPosition: TimeInterval = 0, chapters: [Chapter] = [],
-         chaptersURL: URL? = nil, manuallyDownloaded: Bool = false) {
+         chaptersURL: URL? = nil, manuallyDownloaded: Bool = false, audioBytes: Int64? = nil) {
         self.id = id
         self.title = title
         self.summary = summary
@@ -130,12 +138,13 @@ struct Episode: Identifiable, Hashable, Codable {
         self.chapters = chapters
         self.chaptersURL = chaptersURL
         self.manuallyDownloaded = manuallyDownloaded
+        self.audioBytes = audioBytes
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, podcastTitle, colorHex, artworkURL, audioURL
         case duration, publishedAt, isDownloaded, isPlayed, playbackPosition
-        case chapters, chaptersURL, manuallyDownloaded
+        case chapters, chaptersURL, manuallyDownloaded, audioBytes
     }
 
     /// Carga tolerante (ver `AppState.init(from:)`). `publishedAt` cae a `distantPast` a propósito
@@ -158,6 +167,7 @@ struct Episode: Identifiable, Hashable, Codable {
         chapters = c.lenientArray(Chapter.self, .chapters)
         chaptersURL = c.lenientOptional(URL.self, .chaptersURL)
         manuallyDownloaded = c.lenient(.manuallyDownloaded, or: false)
+        audioBytes = c.lenientOptional(Int64.self, .audioBytes)
     }
 
     /// Tiempo que falta para terminar, en segundos.

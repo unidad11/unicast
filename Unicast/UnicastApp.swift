@@ -23,6 +23,11 @@ struct UnicastApp: App {
         let downloadManager = downloadManager
         let audioPlayer = audioPlayer
         AppDelegate.onProcessingTask = {
+            // La cita siguiente se pide LO PRIMERO, no al final. Una cita concedida se consume, y
+            // si iOS suspende la app a mitad del refresco (cosa que pasa) nunca se llegaba a la
+            // línea del final: se gastaba la cita y no quedaba ninguna pedida, así que la vía
+            // larga se apagaba sola hasta que el usuario abriera la app a mano.
+            BackgroundScheduling.scheduleAll()
             let start = Date()
             let summary = await store.refresh(downloads: downloadManager)
             WakeLog.record(WakeEvent(date: start, trigger: .processing,
@@ -30,15 +35,15 @@ struct UnicastApp: App {
                                       durationSeconds: Date().timeIntervalSince(start),
                                       networkSeconds: summary.networkSeconds,
                                       fastestDetectionSeconds: summary.fastestDetectionSeconds))
-            // Una cita concedida se consume: si no se pide la siguiente aquí mismo, la vía larga
-            // se acaba después de una sola ejecución y no vuelve a haber refresco nocturno.
-            BackgroundScheduling.scheduleAll()
         }
         // Disparo desde la automatización de Atajos (RefreshPodcastsIntent). No toca nada si hay
         // audio sonando: no vale la pena arriesgarse a cortar la reproducción por adelantar un
         // refresco que de todas formas volverá a intentarse en la próxima cita. El candado
         // `isRefreshing` de Store ya evita que esto se pise con las otras tres vías.
         AppDelegate.onShortcutRefresh = {
+            // Era la única de las cuatro vías que no pedía cita, y encima corre de madrugada con
+            // el móvil quieto: el mejor momento posible para pedirla.
+            BackgroundScheduling.scheduleAll()
             guard !audioPlayer.isPlaying else { return }
             let start = Date()
             let summary = await store.refresh(downloads: downloadManager)
@@ -166,6 +171,7 @@ struct UnicastApp: App {
     /// forzarlo al hilo principal evita que ambas cosas se crucen y se pisen entre sí.
     @MainActor
     private func refreshInBackground(trigger: WakeEvent.Trigger) async {
+        BackgroundScheduling.scheduleAll()   // primero la siguiente cita (ver onProcessingTask)
         let start = Date()
         let summary = await store.refresh(downloads: downloadManager)
         WakeLog.record(WakeEvent(date: start, trigger: trigger,
@@ -173,6 +179,5 @@ struct UnicastApp: App {
                                   durationSeconds: Date().timeIntervalSince(start),
                                   networkSeconds: summary.networkSeconds,
                                   fastestDetectionSeconds: summary.fastestDetectionSeconds))
-        BackgroundScheduling.scheduleAll()
     }
 }

@@ -44,6 +44,7 @@ final class RSSParser: NSObject, XMLParserDelegate {
     private var iImage: URL?
     private var iChapters: [Chapter] = []
     private var iChaptersURL: URL?
+    private var iBytes: Int64?      // tamaño del audio segun el feed (<enclosure length=...>)
 
     init(feedURL: URL?, colorHex: String = "5B5BD6") {
         self.feedURL = feedURL
@@ -75,12 +76,16 @@ final class RSSParser: NSObject, XMLParserDelegate {
         switch elementName {
         case "item":
             inItem = true
-            iTitle = ""; iSummary = ""; iAudio = nil; iDuration = 0
+            iTitle = ""; iSummary = ""; iAudio = nil; iDuration = 0; iBytes = nil
             iDate = Date(); iImage = nil; iChapters = []; iChaptersURL = nil
         case "image" where !inItem:
             inChannelImage = true
         case "enclosure":
             if let urlString = attributeDict["url"] { iAudio = URL(string: urlString)?.securedHTTPS }
+            // El tamaño que anuncia el feed. Se le pasa luego a iOS para que sepa lo que va a
+            // descargar (ver `Episode.audioBytes`). Hay feeds que ponen 0 o basura: solo vale si
+            // es un número positivo y creíble.
+            iBytes = attributeDict["length"].flatMap { Int64($0.trimmed) }.flatMap { $0 > 0 ? $0 : nil }
         case "itunes:image":
             if let href = attributeDict["href"], let url = URL(string: href)?.securedHTTPS {
                 if inItem { iImage = url } else { channelImage = url }
@@ -117,7 +122,8 @@ final class RSSParser: NSObject, XMLParserDelegate {
                 episodes.append(Episode(
                     title: iTitle, summary: iSummary.trimmed, podcastTitle: channelTitle.trimmed,
                     colorHex: colorHex, artworkURL: iImage ?? channelImage, audioURL: iAudio,
-                    duration: iDuration, publishedAt: iDate, chapters: iChapters, chaptersURL: iChaptersURL
+                    duration: iDuration, publishedAt: iDate, chapters: iChapters, chaptersURL: iChaptersURL,
+                    audioBytes: iBytes
                 ))
                 inItem = false
             default:

@@ -455,13 +455,22 @@ final class AppStore {
     /// cuestión de tiempo.
     private(set) var isRefreshing = false
 
+    /// Cuándo empezó el refresco que tiene el candado. Sin esto, si iOS SUSPENDE el proceso a
+    /// mitad de un refresco el `defer` nunca corre, `isRefreshing` se queda en true para siempre y
+    /// todos los despertares siguientes se van sin hacer nada — dejando además en el registro un
+    /// evento que parece un refresco normal sin novedades. Pasado este tiempo se da por muerto.
+    private var refreshStartedAt: Date?
+    private let refreshLockTimeout: TimeInterval = 5 * 60
+
     @discardableResult
     func refresh(downloads: DownloadManager) async -> RefreshSummary {
-        guard !isRefreshing else {
+        let lockIsStale = Date().timeIntervalSince(refreshStartedAt ?? .distantPast) > refreshLockTimeout
+        guard !isRefreshing || lockIsStale else {
             return RefreshSummary(changed: 0, failed: 0, total: 0, networkSeconds: 0, fastestDetectionSeconds: nil)
         }
         isRefreshing = true
-        defer { isRefreshing = false }
+        refreshStartedAt = Date()
+        defer { isRefreshing = false; refreshStartedAt = nil }
         let all = podcasts
         guard !all.isEmpty else {
             return RefreshSummary(changed: 0, failed: 0, total: 0, networkSeconds: 0, fastestDetectionSeconds: nil)
@@ -470,7 +479,7 @@ final class AppStore {
         let current = Array(all[start...] + all[..<start])
         var changed = 0
         var failed = 0
-        var launched = 0
+        var processed = 0
         var networkSeconds: Double = 0
         var fastestDetectionSeconds: Double?
         var lastSaveAt = Date.distantPast
@@ -479,7 +488,6 @@ final class AppStore {
             func launchNext() {
                 while let podcast = queue.next() {
                     guard let feed = podcast.feedURL else { continue }
-                    launched += 1
                     group.addTask { [colorHex = podcast.colorHex,
                                       etag = podcast.feedETag, lastModified = podcast.feedLastModified] in
                         let netStart = Date()
@@ -493,7 +501,15 @@ final class AppStore {
             for _ in 0..<maxConcurrentRefreshes { launchNext() }
             for await (id, result, netTime) in group {
                 launchNext()   // uno termina: entra el siguiente de la cola, manteniendo el tope
+                processed += 1
                 networkSeconds += netTime
+                // El punto de partida del siguiente refresco se guarda AQUÍ, según lo que de verdad
+                // se ha terminado de procesar, y no al final del bucle. Dos motivos: si iOS corta
+                // la tarea a mitad, la línea del final no llega a ejecutarse nunca; y la cuenta
+                // anterior sumaba los podcasts LANZADOS, que al drenarse siempre el grupo entero
+                // acababan siendo todos — `(start + total) % total` devuelve el mismo índice, así
+                // que la rotación llevaba desde que se escribió sin rotar absolutamente nada.
+                UserDefaults.standard.set((start + processed) % all.count, forKey: Self.rotationKey)
                 if case .failed = result { failed += 1 }
                 guard let index = podcasts.firstIndex(where: { $0.id == id }) else { continue }
                 if case .fetched(let fresh, let etag, let lastModified) = result {
@@ -520,9 +536,6 @@ final class AppStore {
                 }
             }
         }
-        // La próxima vez se empieza justo donde se quedó esta — si iOS cortó la tarea a mitad,
-        // los que no llegaron a lanzarse son los primeros candidatos del siguiente refresco.
-        UserDefaults.standard.set((start + launched) % all.count, forKey: Self.rotationKey)
         lastRefreshAt = Date()
         save()
         return RefreshSummary(changed: changed, failed: failed, total: current.count,

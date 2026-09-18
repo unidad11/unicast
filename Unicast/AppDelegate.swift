@@ -45,10 +45,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 guard !already else { return }
                 processingTask.setTaskCompleted(success: success)
             }
-            processingTask.expirationHandler = { finish(false) }
-            Task { @MainActor in
+            // El contrato de iOS es explícito: el `expirationHandler` debe CANCELAR el trabajo en
+            // curso antes de dar la tarea por terminada. Antes solo avisaba, y el refresco seguía
+            // haciendo red y escribiendo el JSON de 10 MB fuera de la ventana concedida — que es
+            // justo por lo que el sistema acaba matando la app y recortándole el segundo plano.
+            let work = Task { @MainActor in
                 await onProcessingTask()
                 finish(true)
+            }
+            processingTask.expirationHandler = {
+                work.cancel()
+                finish(false)
             }
         }
         return true
