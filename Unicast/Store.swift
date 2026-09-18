@@ -412,7 +412,7 @@ final class AppStore {
 
     /// Qué episodios DEBERÍAN estar descargados de un podcast: los publicados desde el alta
     /// (nunca el histórico anterior), los más recientes primero, recortados al límite del podcast.
-    private func autoDownloadWindow(for podcast: Podcast) -> [Episode] {
+    func autoDownloadWindow(for podcast: Podcast) -> [Episode] {
         let from = effectiveDownloadFrom(podcast)
         let eligible = podcast.episodes.filter { $0.publishedAt >= from }.sorted { $0.publishedAt > $1.publishedAt }
         switch podcast.downloadLimit {
@@ -424,7 +424,7 @@ final class AppStore {
     /// Fecha de corte efectiva de un podcast. Si es de antes de que existiera `downloadFromDate`,
     /// se comporta como si fuera la del 4º episodio más reciente — el mismo criterio que usa la
     /// migración de `applyAutoDownload`, para que consultar y actuar den siempre lo mismo.
-    private func effectiveDownloadFrom(_ podcast: Podcast) -> Date {
+    func effectiveDownloadFrom(_ podcast: Podcast) -> Date {
         if let date = podcast.downloadFromDate { return date }
         let sorted = podcast.episodes.sorted { $0.publishedAt > $1.publishedAt }
         if sorted.count >= 4 { return sorted[3].publishedAt }
@@ -620,8 +620,10 @@ final class AppStore {
     /// capítulos) — iOS las bloquea desde el arreglo del feed de Emilcar/Histocast, pero los
     /// episodios guardados antes de ese arreglo se quedaron con la URL vieja para siempre.
     /// Devuelve los episodios que eran realmente nuevos (para medir cuánto se tarda en detectarlos).
+    /// Sin `private` únicamente para que las pruebas puedan llamarla: es el corazón de la app y
+    /// donde han vivido los peores fallos. Fuera de `refresh` y de `UnicastTests` no la usa nadie.
     @discardableResult
-    private func merge(_ fresh: Podcast, into index: Int) -> [Episode] {
+    func merge(_ fresh: Podcast, into index: Int) -> [Episode] {
         var updated = podcasts[index]
         updated.summary = fresh.summary.isEmpty ? updated.summary : fresh.summary
         updated.artworkURL = fresh.artworkURL ?? updated.artworkURL
@@ -713,7 +715,7 @@ final class AppStore {
 
     /// Mete los episodios nuevos en las listas inteligentes que siguen a ese podcast
     /// (la promesa de "los nuevos entran solos"; antes no estaba conectado al refresco).
-    private func addToSmartPlaylists(_ episodes: [Episode], from podcastID: UUID) {
+    func addToSmartPlaylists(_ episodes: [Episode], from podcastID: UUID) {
         guard !episodes.isEmpty else { return }
         for index in playlists.indices
         where playlists[index].isSmart && playlists[index].sourcePodcastOrder.contains(podcastID) {
