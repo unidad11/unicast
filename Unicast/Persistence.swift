@@ -56,9 +56,29 @@ enum Persistence {
 
     private static var fileURL: URL { directory.appendingPathComponent("unicast_state.json") }
 
+    /// Cola propia para escribir. La biblioteca del usuario son 10 MB de JSON: codificarla y
+    /// escribirla cuesta cientos de milisegundos, y ahora que el store vive en el hilo principal
+    /// hacerlo ahí sería un tirón visible cada pocos segundos durante un refresco — y tiempo
+    /// tirado de la ventana de segundo plano, que es justo lo que no sobra.
+    ///
+    /// Es una cola SERIE: los guardados se aplican en el mismo orden en que se piden, así que
+    /// ninguno puede adelantar a otro y dejar en disco un estado viejo.
+    private static let ioQueue = DispatchQueue(label: "com.jbs.Unicast.persistence", qos: .utility)
+
+    /// El estado que se pasa es una copia por valor, así que se puede escribir tranquilamente
+    /// mientras el store sigue cambiando.
     static func save(_ state: AppState) {
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        ioQueue.async {
+            guard let data = try? JSONEncoder().encode(state) else { return }
+            try? data.write(to: fileURL, options: .atomic)
+        }
+    }
+
+    /// Espera a que termine todo lo que haya pendiente de escribir. Hay que llamarlo al mandar la
+    /// app a segundo plano: si iOS suspende el proceso con un guardado a medio salir de la cola,
+    /// ese guardado se pierde.
+    static func flush() {
+        ioQueue.sync { }
     }
 
     /// Devuelve nil en dos casos MUY distintos: no hay archivo todavía (instalación nueva) o el

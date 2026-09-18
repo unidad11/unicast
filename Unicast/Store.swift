@@ -26,6 +26,19 @@ struct PendingDownload: Identifiable {
     var id: UUID { episode.id }
 }
 
+/// @MainActor de verdad, no de boquilla.
+///
+/// Antes esto no estaba, y los `@MainActor` que hay en los sitios que LLAMAN a `refresh` no
+/// servían de nada: desde Swift 5.7 una función `async` no aislada nunca hereda el actor de quien
+/// la llama, así que el refresco corría en un hilo de fondo. Comprobado ejecutándolo, no leyéndolo.
+///
+/// Consecuencia real, y es seguramente la explicación de las descargas que "se bajaban pero no se
+/// quedaban marcadas": mientras el refresco escribía `podcasts` desde un hilo de fondo, el hilo
+/// principal escribía la marca de descargado de un episodio recién bajado. `merge` hace
+/// copia-modifica-devuelve, así que el refresco machacaba esa marca y acto seguido la guardaba en
+/// disco. El episodio quedaba en el móvil pero figurando como no descargado, y el siguiente
+/// refresco lo volvía a bajar entero.
+@MainActor
 @Observable
 final class AppStore {
     // Contenido

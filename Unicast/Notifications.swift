@@ -29,15 +29,22 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                  didReceive response: UNNotificationResponse,
                                  withCompletionHandler completionHandler: @escaping () -> Void) {
-        defer { completionHandler() }
         guard let idString = response.notification.request.content.userInfo["episodeID"] as? String,
-              let episodeID = UUID(uuidString: idString),
-              let store, let audioPlayer,
-              let episode = store.episode(id: episodeID) else { return }
-        let enriched = store.enrich(episode)
-        store.nowPlaying = enriched
-        audioPlayer.play(enriched)
-        store.isPlayerPresented = true
+              let episodeID = UUID(uuidString: idString) else {
+            completionHandler()
+            return
+        }
+        // El store vive en el hilo principal (ver AppStore). iOS puede llamar aquí desde otro
+        // hilo, así que se salta al principal en vez de tocarlo desde donde toque.
+        Task { @MainActor in
+            defer { completionHandler() }
+            guard let store, let audioPlayer,
+                  let episode = store.episode(id: episodeID) else { return }
+            let enriched = store.enrich(episode)
+            store.nowPlaying = enriched
+            audioPlayer.play(enriched)
+            store.isPlayerPresented = true
+        }
     }
 
     /// Muestra la notificación también si la app ya está abierta en primer plano.

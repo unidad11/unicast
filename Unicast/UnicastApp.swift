@@ -105,6 +105,7 @@ struct UnicastApp: App {
                             }
                         }
                         store.save()
+                        Persistence.flush()   // que no se quede un guardado a medias al suspender
                         // Se vuelven a pedir las dos citas de segundo plano: la corta (~30 s) y
                         // la larga, que iOS reserva para cuando el móvil está quieto. Ninguna de
                         // las dos tiene hora garantizada; son dos oportunidades en vez de una.
