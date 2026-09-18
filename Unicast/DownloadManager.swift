@@ -60,18 +60,27 @@ final class DownloadManager: NSObject {
     @ObservationIgnored
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.backgroundSessionIdentifier)
-        // OJO: esto NO hace que las descargas en segundo plano empiecen antes. Apple lo dice sin
-        // ambigüedad: "For transfers started while your app is in the background, the system
-        // always starts transfers at its discretion (...) and ignores any value you specified."
-        // Solo tiene efecto en las descargas que arrancan con la app ABIERTA (botón de descargar
-        // a mano), que es donde de verdad sirve de algo dejarlo en false.
+        // false = no le cedemos a iOS la decisión de cuándo transferir. Es además el valor por
+        // defecto (NSURLSession.h:1397, "The default value is `NO`"), y es lo que hacen también
+        // Pocket Casts, YourPods y PodHaven; se deja explícito para que se vea la intención.
+        //
+        // Aquí había un comentario que citaba como texto literal de Apple que en segundo plano
+        // "the system always starts transfers at its discretion (...) and ignores any value you
+        // specified". Esa frase NO aparece en ningún header del SDK (comprobado sobre el SDK
+        // completo). Puede ser cierta y venir de la documentación web, pero no está verificada y
+        // no se va a dejar escrita aquí como si lo estuviera: los comentarios de este archivo ya
+        // mandaron dos veces la investigación por el camino equivocado.
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
-        // Por defecto iOS da 7 DÍAS para completar una transferencia en segundo plano: una
-        // descarga atascada (servidor caído, feed que dejó de existir) se queda "descargando"
-        // toda una semana en vez de fallar pronto. Con esto falla en 48h, `downloading` se limpia
-        // en `didCompleteWithError`, y el episodio se reintenta solo en el siguiente refresco.
-        config.timeoutIntervalForResource = 48 * 60 * 60
+        // Siete días, que es el valor por defecto de Apple. Aquí hubo 48 h para que una descarga
+        // atascada fallara pronto, pero ese plazo cuenta TAMBIÉN el tiempo que la transferencia
+        // pasa esperando red: las sesiones de fondo "always wait for connectivity"
+        // (NSURLSession.h:1384-1385, verificado). Con 48 h, un fin de semana fuera de casa sin
+        // WiFi mataba descargas perfectamente buenas. Lo de detectar las atascadas ya lo resuelven
+        // la espera creciente tras cada fallo y el registro de descargas del diagnóstico.
+        //
+        // NO se pone `waitsForConnectivity`: el header dice que las sesiones de fondo lo ignoran.
+        config.timeoutIntervalForResource = 7 * 24 * 60 * 60
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 
