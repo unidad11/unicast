@@ -6,8 +6,18 @@ import UserNotifications
 @main
 struct UnicastApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var store = AppStore.loadOrSample()
-    @State private var audioPlayer = AudioPlayer()
+    /// La biblioteca y el reproductor se crean UNA sola vez, aquí, y todo lo demás usa estas
+    /// mismas instancias. Antes se creaban en el `@State` y se leían dentro de `init()`, dando por
+    /// hecho que era la misma instancia que luego instala SwiftUI — y NO lo es (comprobado el
+    /// 2026-09-30 comparando `ObjectIdentifier`): había dos bibliotecas vivas a la vez. Lo que se
+    /// hacía de noche (vía `processing`, Atajos, descargas terminadas) iba a una copia fantasma
+    /// que machacaba el archivo de la otra; el episodio detectado a las 00:20 se perdía y se
+    /// volvía a descargar entero hacia las 5:00.
+    private static let sharedStore = AppStore.loadOrSample()
+    private static let sharedPlayer = AudioPlayer()
+
+    @State private var store = UnicastApp.sharedStore
+    @State private var audioPlayer = UnicastApp.sharedPlayer
     @State private var downloadManager = DownloadManager.shared
     @State private var colorExtractor = ColorExtractor()
     @State private var notificationDelegate = NotificationDelegate()
@@ -16,12 +26,11 @@ struct UnicastApp: App {
     init() {
         // BGProcessingTask no tiene atajo en SwiftUI (`.backgroundTask` solo cubre refresco y
         // sesiones URL), así que su handler vive en AppDelegate — sin @Environment ahí, se le
-        // pasa el trabajo por esta closure. `store`/`downloadManager` ya están inicializados en
-        // este punto (son @State con valor por defecto): se captura la MISMA instancia que usará
-        // el resto de la app, nunca una copia nueva.
-        let store = store
-        let downloadManager = downloadManager
-        let audioPlayer = audioPlayer
+        // pasa el trabajo por esta closure. Se capturan las instancias únicas (ver `sharedStore`),
+        // no lo que devuelva el `@State` aquí dentro, que puede ser otra copia.
+        let store = Self.sharedStore
+        let downloadManager = DownloadManager.shared
+        let audioPlayer = Self.sharedPlayer
         AppDelegate.onProcessingTask = {
             // La cita siguiente se pide LO PRIMERO, no al final. Una cita concedida se consume, y
             // si iOS suspende la app a mitad del refresco (cosa que pasa) nunca se llegaba a la
