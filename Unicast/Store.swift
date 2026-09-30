@@ -266,6 +266,10 @@ final class AppStore {
     func subscribe(_ podcast: Podcast, downloads: DownloadManager) {
         guard !podcasts.contains(where: { $0.title == podcast.title }) else { return }
         var fresh = podcast
+        // Cuántos guardar: lo elegido en Ajustes → "Guardar por defecto". Antes ese ajuste no se
+        // leía en ningún sitio y todo podcast nuevo empezaba siempre en "Los 5 últimos".
+        // Solo afecta al alta: cada podcast se puede cambiar luego en sus propios ajustes.
+        fresh.downloadLimit = defaultDownloadLimit
         // Fecha de alta = corte. Se bajan los 4 más recientes (base) y, de ahí en adelante,
         // lo que se publique. NUNCA el histórico anterior a esa fecha.
         let byNewest = fresh.episodes.sorted { $0.publishedAt > $1.publishedAt }
