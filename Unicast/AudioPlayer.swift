@@ -60,6 +60,22 @@ final class AudioPlayer {
         ) { [weak self] notification in
             self?.handleInterruption(notification)
         }
+        // Quitarse los AirPods o desconectar el coche: iOS pausa el audio por su cuenta, sin
+        // pasar por el botón de pausa. Antes la app seguía creyendo que sonaba y no apuntaba
+        // dónde se había quedado.
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let value = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  AVAudioSession.RouteChangeReason(rawValue: value) == .oldDeviceUnavailable else { return }
+            if let time = self.player.currentItem?.currentTime().seconds, time.isFinite, self.pendingSeek == nil {
+                self.currentTime = time
+            }
+            self.isPlaying = false
+            self.savePosition()
+            self.updateNowPlaying()
+        }
     }
 
     /// Carga un episodio sin reproducir (para "recordar el último" al abrir la app).
@@ -69,10 +85,10 @@ final class AudioPlayer {
         duration = episode.duration
         currentTime = episode.playbackPosition
         // Si está descargado, reproduce el archivo local; si no, hace streaming.
-        let source = DownloadManager.isDownloaded(episode.id)
-            ? DownloadManager.localURL(for: episode.id) : episode.audioURL
+        let isLocal = DownloadManager.isDownloaded(episode.id)
+        let source = isLocal ? DownloadManager.localURL(for: episode.id) : episode.audioURL
         if let url = source {
-            let item = AVPlayerItem(url: url)
+            let item = Self.makeItem(url: url, isLocal: isLocal)
             player.replaceCurrentItem(with: item)
             seekWhenReady(item, to: episode.playbackPosition)
         }
@@ -127,8 +143,11 @@ final class AudioPlayer {
     func togglePlayPause() {
         isPlaying.toggle()
         if isPlaying {
-            player.play()
+            // Recién abierta la app, el episodio puede estar aún colocándose: sonar ya haría
+            // oír un trozo del principio. Se espera a que termine el salto.
+            if pendingSeek != nil { playWhenSeekCompletes = true } else { player.play() }
         } else {
+            playWhenSeekCompletes = false
             player.pause()
             savePosition()   // al pausar, apunta ya dónde se quedó
         }
@@ -138,7 +157,12 @@ final class AudioPlayer {
     /// Lleva la reproducción a un segundo concreto (la barra de progreso).
     func seek(to seconds: TimeInterval) {
         currentTime = min(max(0, seconds), duration)
-        seekPlayer(to: currentTime)
+        // Si el episodio aún se está colocando donde se dejó, el nuevo punto sustituye a ese.
+        if pendingSeek != nil {
+            pendingSeek = currentTime
+        } else {
+            seekPlayer(to: currentTime)
+        }
         refreshArtworkIfNeeded()
         updateNowPlaying()
     }
@@ -149,6 +173,24 @@ final class AudioPlayer {
     }
 
     // MARK: - Privado
+
+    /// Crea el elemento de audio. Con el archivo descargado se pide TIEMPO PRECISO
+    /// (`AVURLAssetPreferPreciseDurationAndTimingKey`), y esa es la causa de fondo de que al
+    /// retomar un episodio días después "volviera atrás" 5-6 minutos:
+    ///
+    /// Casi todos los podcasts son mp3 de bitrate variable (VBR). Sin tiempo preciso, iOS no sabe
+    /// en qué byte cae el minuto 35: lo ESTIMA con el bitrate medio y salta ahí. El marcador dice
+    /// 35:00 (y así se sigue guardando), pero lo que suena es el minuto 29-30. Mientras la app
+    /// sigue viva no pasa nada, porque el audio no se recoloca; pero tras unos días iOS la ha
+    /// cerrado, al abrirla hay que saltar a la posición guardada... y ahí aparece el desfase.
+    /// Pedir tiempo preciso obliga a iOS a leer el archivo de verdad (en un mp3 local tarda
+    /// un instante) y el salto cae en el segundo exacto. Al streaming no se le aplica: le
+    /// obligaría a bajarse el episodio entero antes de empezar a sonar.
+    private static func makeItem(url: URL, isLocal: Bool) -> AVPlayerItem {
+        guard isLocal else { return AVPlayerItem(url: url) }
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        return AVPlayerItem(asset: asset)
+    }
 
     private func configureSession() {
         let session = AVAudioSession.sharedInstance()
@@ -184,23 +226,36 @@ final class AudioPlayer {
             let status = item.status
             guard status == .readyToPlay || status == .failed else { return }
             DispatchQueue.main.async {
-                guard let self, let target = self.pendingSeek else { return }
-                self.pendingSeek = nil
+                guard let self, let target = self.pendingSeek, self.player.currentItem === item else { return }
                 self.statusObservation?.invalidate()
                 self.statusObservation = nil
                 // Si el archivo no se puede abrir, no dejes la app diciendo que suena.
                 guard status == .readyToPlay else {
+                    self.pendingSeek = nil
                     self.playWhenSeekCompletes = false
                     self.isPlaying = false
                     self.updateNowPlaying()
                     return
                 }
-                self.seekPlayer(to: target, precise: true) { [weak self] in
-                    guard let self, self.playWhenSeekCompletes else { return }
-                    self.playWhenSeekCompletes = false
-                    self.player.playImmediately(atRate: 1.0)
-                }
+                self.performPendingSeek(on: item)
             }
+        }
+    }
+
+    /// Hace el salto pendiente (preciso) y, al terminar, arranca si se había pedido play.
+    /// `pendingSeek` sigue puesto hasta que el salto TERMINA: así el reloj de la app no se pisa
+    /// con el 0:00 que marca el reproductor mientras se coloca. Si mientras tanto se pidió otro
+    /// punto (barra, ±30 s), se encadena un salto más hasta ese.
+    private func performPendingSeek(on item: AVPlayerItem) {
+        guard let target = pendingSeek, player.currentItem === item else { return }
+        seekPlayer(to: target, precise: true) { [weak self] in
+            guard let self, self.player.currentItem === item, let latest = self.pendingSeek else { return }
+            guard latest == target else { self.performPendingSeek(on: item); return }
+            self.pendingSeek = nil
+            self.currentTime = target
+            guard self.playWhenSeekCompletes else { return }
+            self.playWhenSeekCompletes = false
+            self.player.playImmediately(atRate: 1.0)
         }
     }
 
@@ -222,6 +277,7 @@ final class AudioPlayer {
         switch type {
         case .began:
             isPlaying = false
+            savePosition()   // una llamada puede acabar con la app cerrada: apunta el sitio ya
             updateNowPlaying()
         case .ended:
             let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
@@ -239,6 +295,10 @@ final class AudioPlayer {
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self else { return }
+            // Mientras el episodio aún no se ha colocado donde se dejó, el reproductor marca 0:00.
+            // Si se copiara aquí, al salir de la app en ese instante se guardaría 0 (o un punto
+            // intermedio) encima de la posición buena y se perdería el sitio.
+            guard self.pendingSeek == nil else { return }
             self.currentTime = time.seconds.isFinite ? time.seconds : 0
             if let itemDuration = self.player.currentItem?.duration.seconds,
                itemDuration.isFinite, itemDuration > 0 {
