@@ -29,7 +29,6 @@ struct SettingsView: View {
                     .listRowBackground(Theme.surface)
 
                     Section("Descargas") {
-                        Toggle("Descargar solo con WiFi", isOn: $store.wifiOnlyDownloads)
                         pickerRow("Guardar por defecto", value: store.defaultDownloadLimit.label) {
                             Button("Todos") { store.defaultDownloadLimit = .all }
                             Button("Los 5 últimos") { store.defaultDownloadLimit = .last(5) }

@@ -28,7 +28,6 @@ final class AppStore {
     var showNewCountBadges: Bool = false   // contador de nuevos sobre pósters: OFF de fábrica
     var libraryLayout: LibraryLayout = .grid
     var selectedTab: Int = 0   // pestaña activa del TabView
-    var wifiOnlyDownloads: Bool = true
     var defaultDownloadLimit: DownloadLimit = .last(5)
 
     // Reproductor
@@ -551,7 +550,6 @@ final class AppStore {
         backgroundStyle = state.backgroundStyle
         showNewCountBadges = state.showNewCountBadges
         libraryLayout = state.libraryLayout
-        wifiOnlyDownloads = state.wifiOnlyDownloads
         defaultDownloadLimit = state.defaultDownloadLimit
         nowPlaying = state.nowPlayingID.flatMap { episode(id: $0) }
     }
@@ -560,7 +558,7 @@ final class AppStore {
     func snapshot() -> AppState {
         AppState(podcasts: podcasts, playlists: playlists, backgroundStyle: backgroundStyle,
                  showNewCountBadges: showNewCountBadges, libraryLayout: libraryLayout,
-                 wifiOnlyDownloads: wifiOnlyDownloads, defaultDownloadLimit: defaultDownloadLimit,
+                 defaultDownloadLimit: defaultDownloadLimit,
                  nowPlayingID: nowPlaying?.id)
     }
 

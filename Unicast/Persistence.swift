@@ -7,7 +7,6 @@ struct AppState: Codable {
     var backgroundStyle: BackgroundStyle
     var showNewCountBadges: Bool
     var libraryLayout: LibraryLayout
-    var wifiOnlyDownloads: Bool
     var defaultDownloadLimit: DownloadLimit
     var nowPlayingID: UUID?
 }
