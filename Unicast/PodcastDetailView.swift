@@ -174,6 +174,14 @@ struct PodcastDetailView: View {
                                 store.removeEpisode(episode.id, from: current.id)
                             } label: { Label("Borrar", systemImage: "trash") }
                         }
+                        // Marcar un escuchado como pendiente otra vez. Sin esto, un episodio
+                        // descartado por error no volvía a descargarse solo nunca más.
+                        if tab == .all && !isSelecting && episode.isPlayed {
+                            Button {
+                                store.markUnplayed(episode.id, in: current.id)
+                            } label: { Label("Pendiente", systemImage: "arrow.uturn.backward") }
+                            .tint(Theme.accent)
+                        }
                     }
                 }
             }
@@ -296,6 +304,9 @@ private struct EpisodeRow: View {
                 .accessibilityLabel("Descargado")
         } else {
             Button {
+                // Se apunta ANTES de empezar: la rotación del límite no puede borrar un episodio
+                // que el usuario ha pedido a mano, y la descarga puede terminar con la app cerrada.
+                store.markManuallyDownloaded(episode.id, in: podcastID)
                 downloads.download(episode) { store.markDownloaded(episode.id, in: podcastID) }
             } label: {
                 Image(systemName: "arrow.down")

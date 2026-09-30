@@ -71,7 +71,7 @@ struct LibraryView: View {
         LazyVGrid(columns: gridColumns, spacing: 9) {
             ForEach(store.podcasts) { podcast in
                 NavigationLink(value: podcast) {
-                    PodcastCover(podcast: podcast, size: 80)
+                    PodcastCover(podcast: podcast, size: 80, showNewBadge: store.showNewCountBadges)
                 }
                 .buttonStyle(.plain)
                 .contextMenu { podcastMenu(podcast) }

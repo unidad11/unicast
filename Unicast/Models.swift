@@ -53,6 +53,37 @@ struct Podcast: Identifiable, Hashable, Codable {
         self.feedLastModified = feedLastModified
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, title, author, summary, feedURL, colorHex, artworkURL, episodes
+        case autoDownload, downloadLimit, sortOrder, continuousDirection
+        case notifyNew, autoDeleteOnFinish, downloadFromDate, feedETag, feedLastModified
+    }
+
+    /// Carga tolerante (ver `AppState.init(from:)`): un campo nuevo o un valor corrupto no puede
+    /// costar el podcast entero, y menos aún la biblioteca completa.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Ver `Episode.init(from:)`: el id no puede inventarse. El de un podcast enlaza además con
+        // las listas inteligentes (`sourcePodcastOrder`).
+        id = try c.decode(UUID.self, forKey: .id)
+        title = c.lenient(.title, or: "")
+        author = c.lenient(.author, or: "")
+        summary = c.lenient(.summary, or: "")
+        feedURL = c.lenientOptional(URL.self, .feedURL)
+        colorHex = c.lenient(.colorHex, or: "6B5CE7")
+        artworkURL = c.lenientOptional(URL.self, .artworkURL)
+        episodes = c.lenientArray(Episode.self, .episodes)
+        autoDownload = c.lenient(.autoDownload, or: true)
+        downloadLimit = c.lenient(.downloadLimit, or: DownloadLimit.last(5))
+        sortOrder = c.lenient(.sortOrder, or: EpisodeSort.newest)
+        continuousDirection = c.lenient(.continuousDirection, or: PlayDirection.posteriores)
+        notifyNew = c.lenient(.notifyNew, or: true)
+        autoDeleteOnFinish = c.lenient(.autoDeleteOnFinish, or: true)
+        downloadFromDate = c.lenientOptional(Date.self, .downloadFromDate)
+        feedETag = c.lenientOptional(String.self, .feedETag)
+        feedLastModified = c.lenientOptional(String.self, .feedLastModified)
+    }
+
     /// Episodios descargados (pestaña "Descargados").
     var downloadedEpisodes: [Episode] { episodes.filter(\.isDownloaded) }
 
@@ -73,15 +104,44 @@ struct Episode: Identifiable, Hashable, Codable {
     var duration: TimeInterval     // duración total en segundos
     var publishedAt: Date
     var isDownloaded: Bool
-    var isPlayed: Bool              // ya escuchado: no reaparece en "Todos"
+    /// Ya escuchado (o descartado a mano deslizando). NO lo esconde de la pestaña "Todos": sigue
+    /// saliendo, atenuado. Lo que hace es dejarlo fuera de la auto-descarga, para que un episodio
+    /// que ya has oído no vuelva a bajarse solo. Se deshace deslizando → "Pendiente".
+    var isPlayed: Bool
     var playbackPosition: TimeInterval  // dónde se quedó, para retomar (puntos 11 y 12)
     var chapters: [Chapter]
     var chaptersURL: URL?    // capítulos en un JSON aparte (formato Podcasting 2.0), si el feed los trae así
+    /// Lo bajó el usuario a mano desde "Todos", no el auto-descargar. La rotación del límite de
+    /// descargas NO puede tocar estos: si alguien se baja un capítulo viejo a propósito para el
+    /// avión, el siguiente refresco no se lo puede borrar por "no entrar en los 5 últimos".
+    var manuallyDownloaded: Bool
+    /// Cuántos bytes dice el feed que ocupa el audio (atributo `length` del `<enclosure>`).
+    ///
+    /// No es decoración: es el único dato con el que se puede responder a iOS cuánto va a pesar una
+    /// descarga. Apple insiste en el propio SDK en que el sistema usa esa cifra "para optimizar la
+    /// planificación de las tareas", y las descargas nocturnas son justo las que iOS planifica a su
+    /// antojo. Sin esta cifra, para el planificador son transferencias de tamaño DESCONOCIDO, que es
+    /// el peor caso posible. Venía gratis en el feed y se estaba tirando.
+    var audioBytes: Int64?
+    /// Cuántas veces seguidas ha fallado la descarga de este episodio, y cuándo fue la última.
+    ///
+    /// Sin esto, un episodio cuya URL está muerta (404, servidor que ya no existe) se volvía a
+    /// intentar en CADA refresco: unas quince veces al día, para siempre, gastando datos y la
+    /// ventana de segundo plano que hace falta para los episodios que sí existen.
+    var downloadFailures: Int
+    var lastDownloadFailureAt: Date?
+    /// El `<guid>` del feed: el identificador que el autor le da al episodio y que no cambia
+    /// aunque corrija el título. Hasta ahora la identidad era el TÍTULO, y eso tenía dos fallos
+    /// silenciosos: si el autor corregía una errata, el episodio entraba otra vez como nuevo y se
+    /// volvía a descargar entero; y si dos episodios compartían título (un "Bonus", un "Especial"),
+    /// el segundo se descartaba para siempre sin decir nada.
+    var guid: String?
 
     init(id: UUID = UUID(), title: String, summary: String = "", podcastTitle: String,
          colorHex: String, artworkURL: URL? = nil, audioURL: URL? = nil, duration: TimeInterval, publishedAt: Date,
          isDownloaded: Bool = false, isPlayed: Bool = false, playbackPosition: TimeInterval = 0, chapters: [Chapter] = [],
-         chaptersURL: URL? = nil) {
+         chaptersURL: URL? = nil, manuallyDownloaded: Bool = false, audioBytes: Int64? = nil,
+         downloadFailures: Int = 0, lastDownloadFailureAt: Date? = nil, guid: String? = nil) {
         self.id = id
         self.title = title
         self.summary = summary
@@ -96,6 +156,49 @@ struct Episode: Identifiable, Hashable, Codable {
         self.playbackPosition = playbackPosition
         self.chapters = chapters
         self.chaptersURL = chaptersURL
+        self.manuallyDownloaded = manuallyDownloaded
+        self.audioBytes = audioBytes
+        self.downloadFailures = downloadFailures
+        self.lastDownloadFailureAt = lastDownloadFailureAt
+        self.guid = guid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, summary, podcastTitle, colorHex, artworkURL, audioURL
+        case duration, publishedAt, isDownloaded, isPlayed, playbackPosition
+        case chapters, chaptersURL, manuallyDownloaded, audioBytes
+        case downloadFailures, lastDownloadFailureAt, guid
+    }
+
+    /// Carga tolerante (ver `AppState.init(from:)`). `publishedAt` cae a `distantPast` a propósito
+    /// si viene ilegible: así el episodio queda FUERA de la ventana de auto-descarga en vez de
+    /// colarse dentro y provocar descargas que nadie pidió.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // El id es lo ÚNICO que no puede caer a un valor por defecto. El nombre del mp3 en disco
+        // es ese id: inventarle uno nuevo dejaba el audio huérfano (y la limpieza lo borraba),
+        // marcaba el episodio como descargado sin estarlo y forzaba bajarlo otra vez entero. Si no
+        // se puede leer, este episodio se descarta —`lenientArray` lo salta sin romper el resto—
+        // en vez de resucitarlo con una identidad falsa.
+        id = try c.decode(UUID.self, forKey: .id)
+        title = c.lenient(.title, or: "")
+        summary = c.lenient(.summary, or: "")
+        podcastTitle = c.lenient(.podcastTitle, or: "")
+        colorHex = c.lenient(.colorHex, or: "6B5CE7")
+        artworkURL = c.lenientOptional(URL.self, .artworkURL)
+        audioURL = c.lenientOptional(URL.self, .audioURL)
+        duration = c.lenient(.duration, or: TimeInterval(0))
+        publishedAt = c.lenient(.publishedAt, or: Date.distantPast)
+        isDownloaded = c.lenient(.isDownloaded, or: false)
+        isPlayed = c.lenient(.isPlayed, or: false)
+        playbackPosition = c.lenient(.playbackPosition, or: TimeInterval(0))
+        chapters = c.lenientArray(Chapter.self, .chapters)
+        chaptersURL = c.lenientOptional(URL.self, .chaptersURL)
+        manuallyDownloaded = c.lenient(.manuallyDownloaded, or: false)
+        audioBytes = c.lenientOptional(Int64.self, .audioBytes)
+        downloadFailures = c.lenient(.downloadFailures, or: 0)
+        lastDownloadFailureAt = c.lenientOptional(Date.self, .lastDownloadFailureAt)
+        guid = c.lenientOptional(String.self, .guid)
     }
 
     /// Tiempo que falta para terminar, en segundos.

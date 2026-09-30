@@ -23,6 +23,11 @@ struct UnicastApp: App {
         let downloadManager = downloadManager
         let audioPlayer = audioPlayer
         AppDelegate.onProcessingTask = {
+            // La cita siguiente se pide LO PRIMERO, no al final. Una cita concedida se consume, y
+            // si iOS suspende la app a mitad del refresco (cosa que pasa) nunca se llegaba a la
+            // línea del final: se gastaba la cita y no quedaba ninguna pedida, así que la vía
+            // larga se apagaba sola hasta que el usuario abriera la app a mano.
+            BackgroundScheduling.scheduleAll()
             let start = Date()
             let summary = await store.refresh(downloads: downloadManager)
             WakeLog.record(WakeEvent(date: start, trigger: .processing,
@@ -30,12 +35,19 @@ struct UnicastApp: App {
                                       durationSeconds: Date().timeIntervalSince(start),
                                       networkSeconds: summary.networkSeconds,
                                       fastestDetectionSeconds: summary.fastestDetectionSeconds))
+            // Con el guardado en una cola aparte, terminar aquí sin esperar significa que iOS
+            // puede suspender el proceso con los 10 MB a medio escribir — y se perdería justo el
+            // refresco nocturno, que es el que importa.
+            Persistence.flush()
         }
         // Disparo desde la automatización de Atajos (RefreshPodcastsIntent). No toca nada si hay
         // audio sonando: no vale la pena arriesgarse a cortar la reproducción por adelantar un
         // refresco que de todas formas volverá a intentarse en la próxima cita. El candado
         // `isRefreshing` de Store ya evita que esto se pise con las otras tres vías.
         AppDelegate.onShortcutRefresh = {
+            // Era la única de las cuatro vías que no pedía cita, y encima corre de madrugada con
+            // el móvil quieto: el mejor momento posible para pedirla.
+            BackgroundScheduling.scheduleAll()
             guard !audioPlayer.isPlaying else { return }
             let start = Date()
             let summary = await store.refresh(downloads: downloadManager)
@@ -44,6 +56,7 @@ struct UnicastApp: App {
                                       durationSeconds: Date().timeIntervalSince(start),
                                       networkSeconds: summary.networkSeconds,
                                       fastestDetectionSeconds: summary.fastestDetectionSeconds))
+            Persistence.flush()   // ver arriba: no terminar con el guardado a medias
         }
         // Estas tres tienen que estar listas ANTES de que iOS pueda despertar la app en segundo
         // plano puro (sin montar ninguna pantalla) — por eso van aquí y no en `.onAppear`, que NO
@@ -51,12 +64,24 @@ struct UnicastApp: App {
         // que terminaba de madrugada se guardaba bien en disco pero nunca se marcaba como
         // descargada, así que el siguiente refresco la volvía a bajar ENTERA — y así una y otra
         // vez, varias veces al día, hasta que el usuario abría la app a mano y `.onAppear` corría.
-        downloadManager.attachBackgroundSession()
         downloadManager.onFinished = { id in
             store.markDownloaded(id)
             store.save()
         }
-        store.reconcileDownloads(using: downloadManager)
+        downloadManager.onFailed = { id in store.markDownloadFailed(id) }
+        // El orden importa: primero se rescata el audio que quedara en la carpeta vieja (Caches)
+        // y se tiran los restos de descargas fallidas, y SOLO DESPUÉS se repasa qué hay en disco.
+        // Al revés —que es como estaba, con esto en `.onAppear`— el repaso daba por perdidos
+        // episodios cuyo mp3 seguía vivo en la carpeta antigua, los marcaba "no descargado" y los
+        // volvía a bajar enteros.
+        DownloadManager.migrateLegacyFiles()
+        DownloadManager.cleanUpInvalidFiles()
+        // El repaso espera a saber qué tiene iOS en vuelo. Antes se lanzaba justo después de pedir
+        // la lista, que llega de forma asíncrona, así que corría con la lista vacía y podía encolar
+        // por segunda vez un mp3 que ya se estaba bajando.
+        downloadManager.attachBackgroundSession {
+            store.reconcileDownloads(using: downloadManager)
+        }
     }
 
     var body: some Scene {
@@ -77,7 +102,9 @@ struct UnicastApp: App {
                             store.retryMissingDownloads(using: downloadManager)
                         }
                         // Al volver a la app: refresco automático (si el último tiene >5 min).
-                        // @MainActor: evita que este refresco se cruce con un "seguir podcast" a la vez.
+                        // El aislamiento de verdad lo da `@MainActor` sobre `AppStore`, no este
+                        // `Task`: una función `async` no aislada NO hereda el actor de quien la
+                        // llama, cosa que este comentario daba por hecha y era falsa.
                         Task { @MainActor in
                             let start = Date()
                             guard let summary = await store.refreshIfStale(downloads: downloadManager) else { return }
@@ -97,27 +124,30 @@ struct UnicastApp: App {
                             }
                         }
                         store.save()
-                        // Dos vías de refresco en segundo plano, no una: `scheduleRefresh` es la
-                        // ventana corta (~30s) de siempre; `scheduleProcessing` es más larga pero
-                        // iOS tiende a reservarla para cuando el móvil está quieto. Ninguna de las
-                        // dos tiene hora garantizada — solo son dos oportunidades en vez de una.
-                        scheduleRefresh()
-                        scheduleProcessing()
+                        Persistence.flush()   // que no se quede un guardado a medias al suspender
+                        // Se vuelven a pedir las dos citas de segundo plano: la corta (~30 s) y
+                        // la larga, que iOS reserva para cuando el móvil está quieto. Ninguna de
+                        // las dos tiene hora garantizada; son dos oportunidades en vez de una.
+                        BackgroundScheduling.scheduleAll()
                     }
                 }
                 .onAppear {
-                    // Rescata el audio que quede en la carpeta vieja y, después, limpia lo que ya
-                    // no tiene sentido en disco. `attachBackgroundSession`, `onFinished` y
-                    // `reconcileDownloads` van en el `init()` (ver arriba): esto de aquí puede
-                    // esperar a que el usuario abra la app de verdad.
-                    DownloadManager.migrateLegacyFiles()
-                    DownloadManager.cleanUpInvalidFiles()   // restos de descargas fallidas
+                    // Se piden las citas de segundo plano en CADA arranque, no solo al mandar la
+                    // app al fondo: si el usuario nunca sale de la app "por la puerta buena", o si
+                    // iOS ya consumió la cita anterior, antes no quedaba ninguna pedida. Va aquí y
+                    // no en `init()` porque el manejador del refresco corto lo registra SwiftUI al
+                    // montar la escena: pedirlo antes de eso se lo puede comer el sistema.
+                    BackgroundScheduling.scheduleAll()
                     // Huérfanos: audio bien descargado que se quedó sin episodio porque un
                     // refresco se cortó a mitad. Los que están descargándose AHORA se excluyen
                     // (siguen en la lista aunque su fichero final aún no exista o esté a medias).
-                    let validIDs = Set(store.podcasts.flatMap { $0.episodes.map(\.id) })
-                        .union(downloadManager.downloading)
-                    DownloadManager.cleanUpOrphans(validEpisodeIDs: validIDs)
+                    // NUNCA con la biblioteca de ejemplo cargada: ahí TODO el audio real parecería
+                    // huérfano y esta línea se llevaría por delante las descargas del usuario.
+                    if !store.isSampleLibrary {
+                        let validIDs = Set(store.podcasts.flatMap { $0.episodes.map(\.id) })
+                            .union(downloadManager.downloading)
+                        DownloadManager.cleanUpOrphans(validEpisodeIDs: validIDs)
+                    }
                     // Recuerda el último episodio (lo deja listo, en pausa).
                     if let episode = store.nowPlaying { audioPlayer.prepare(store.enrich(episode)) }
                     // Guarda la posición al pausar y cada poco mientras suena. Antes solo se
@@ -151,33 +181,18 @@ struct UnicastApp: App {
                     }
                 }
         }
-        .backgroundTask(.appRefresh("com.jbs.Unicast.refresh")) {
+        .backgroundTask(.appRefresh(BackgroundScheduling.refreshIdentifier)) {
             // iOS ejecuta esto en segundo plano cuando lo cree oportuno: refresca feeds y descarga.
             await refreshInBackground(trigger: .appRefresh)
         }
     }
 
-    /// Programa un refresco corto en segundo plano (iOS decide el momento exacto, best-effort).
-    private func scheduleRefresh() {
-        let request = BGAppRefreshTaskRequest(identifier: "com.jbs.Unicast.refresh")
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 10 * 60) // a partir de ~10 min
-        try? BGTaskScheduler.shared.submit(request)
-    }
-
-    /// Programa la vía más larga (BGProcessingTask): iOS la ejecuta con menos prisa, típicamente
-    /// cuando detecta el dispositivo ocioso, así que le pedimos solo red — no batería ni carga,
-    /// para no reducir encima las oportunidades de que llegue a ejecutarse.
-    private func scheduleProcessing() {
-        let request = BGProcessingTaskRequest(identifier: "com.jbs.Unicast.processing")
-        request.requiresNetworkConnectivity = true
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        try? BGTaskScheduler.shared.submit(request)
-    }
-
-    /// @MainActor: el refresco en segundo plano toca `store.podcasts` igual que "seguir un podcast";
-    /// forzarlo al hilo principal evita que ambas cosas se crucen y se pisen entre sí.
+    /// Quien garantiza que esto no se cruce con nada es `@MainActor` sobre la propia clase
+    /// `AppStore`. Marcarlo aquí es solo coherencia: durante mucho tiempo estuvo SOLO aquí, y no
+    /// servía de nada porque una función `async` no aislada no hereda el actor del llamante.
     @MainActor
     private func refreshInBackground(trigger: WakeEvent.Trigger) async {
+        BackgroundScheduling.scheduleAll()   // primero la siguiente cita (ver onProcessingTask)
         let start = Date()
         let summary = await store.refresh(downloads: downloadManager)
         WakeLog.record(WakeEvent(date: start, trigger: trigger,
@@ -185,7 +200,6 @@ struct UnicastApp: App {
                                   durationSeconds: Date().timeIntervalSince(start),
                                   networkSeconds: summary.networkSeconds,
                                   fastestDetectionSeconds: summary.fastestDetectionSeconds))
-        scheduleRefresh()
-        scheduleProcessing()
+        Persistence.flush()   // ver onProcessingTask: no terminar con el guardado a medias
     }
 }

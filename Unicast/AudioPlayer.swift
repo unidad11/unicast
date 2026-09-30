@@ -51,10 +51,30 @@ final class AudioPlayer {
         setupRemoteCommands()
         NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
             guard let self, let id = self.currentEpisode?.id else { return }
+            // Hay que mirar QUÉ item ha terminado. La notificación la manda el propio AVPlayerItem
+            // y puede llegar con retraso; si en ese hueco el usuario ha cambiado de episodio, sin
+            // este filtro se daba por terminado —y se BORRABA— el episodio recién elegido, que no
+            // había sonado ni un segundo.
+            guard let item = notification.object as? AVPlayerItem,
+                  item === self.player.currentItem else { return }
             self.isPlaying = false
             self.onFinished?(id)
+        }
+        // Al quitarse los AirPods (o quedarse sin batería, o salir de rango) iOS pasa la salida al
+        // altavoz del iPhone. Sin esto, el podcast seguía sonando a todo volumen por el altavoz:
+        // el susto clásico en el metro. La categoría .playback NO hace esto sola.
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
+            self.player.pause()
+            self.isPlaying = false
+            self.savePosition()
+            self.updateNowPlaying()
         }
         // Llamadas, avisos de Siri, etc.: sin esto, al colgar el sistema puede darle el control
         // a otra app (Apple Music) en vez de devolvérselo a Unicast.
@@ -83,6 +103,9 @@ final class AudioPlayer {
 
     /// Carga un episodio sin reproducir (para "recordar el último" al abrir la app).
     func prepare(_ episode: Episode) {
+        // Guarda dónde se quedó el anterior ANTES de cambiar. Sin esto, cambiar de episodio sin
+        // pausar perdía hasta 30 s de progreso (lo que va de un guardado automático al siguiente).
+        if let current = currentEpisode, current.id != episode.id { savePosition() }
         currentEpisode = episode
         lastArtworkURL = nil
         duration = episode.duration
@@ -94,7 +117,12 @@ final class AudioPlayer {
         if let url = source {
             let item = Self.makeItem(url: url, isLocal: isLocal)
             player.replaceCurrentItem(with: item)
-            seekWhenReady(item, to: episode.playbackPosition)
+            observeStatus(of: item, seekTo: episode.playbackPosition)
+        } else {
+            // Un episodio sin audio (feed sin <enclosure>, o URL ilegible) NO puede dejar cargado
+            // el item anterior: seguiría sonando el episodio de antes con la identidad del nuevo,
+            // y el autoborrado acabaría borrando un episodio que el usuario no ha escuchado.
+            clearPlayerItem()
         }
         lastSavedTime = episode.playbackPosition
         isPlaying = false
@@ -133,6 +161,12 @@ final class AudioPlayer {
     func play(_ episode: Episode) {
         try? AVAudioSession.sharedInstance().setActive(true)
         if currentEpisode?.id != episode.id { prepare(episode) } else { switchToLocalFileIfAvailable() }
+        // Sin nada cargado no hay nada que reproducir: no dejes la app diciendo que suena.
+        guard player.currentItem != nil else {
+            isPlaying = false
+            updateNowPlaying()
+            return
+        }
         // Si aún falta colocar el episodio donde se dejó, espera a ese salto para sonar: si no,
         // se oiría un instante del principio y después el brinco.
         if pendingSeek != nil {
@@ -232,17 +266,20 @@ final class AudioPlayer {
     /// Salta a la posición guardada, pero SOLO cuando el audio esté de verdad listo.
     /// A un mp3 de varias horas le lleva un instante leer su índice interno; si se le pide el salto
     /// antes de tiempo, iOS lo descarta sin avisar y el episodio arranca donde le parece.
-    private func seekWhenReady(_ item: AVPlayerItem, to seconds: TimeInterval) {
+    private func observeStatus(of item: AVPlayerItem, seekTo seconds: TimeInterval) {
         statusObservation?.invalidate()
         statusObservation = nil
-        pendingSeek = nil
-        guard seconds > 0 else { return }
-        pendingSeek = seconds
+        pendingSeek = seconds > 0 ? seconds : nil
+        // El vigía se instala SIEMPRE, también cuando el episodio empieza desde cero. Antes solo se
+        // ponía si había una posición guardada a la que saltar, así que un archivo corrupto o una
+        // URL caída en un episodio que se estrenaba dejaban la app diciendo "reproduciendo" para
+        // siempre: sin sonido, sin barra que avanzara y sin ningún aviso.
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             let status = item.status
             guard status == .readyToPlay || status == .failed else { return }
             DispatchQueue.main.async {
-                guard let self, let target = self.pendingSeek, self.player.currentItem === item else { return }
+                // Si mientras tanto se ha cambiado de episodio, esto ya no va con nosotros.
+                guard let self, self.player.currentItem === item else { return }
                 self.statusObservation?.invalidate()
                 self.statusObservation = nil
                 // Si el archivo no se puede abrir, no dejes la app diciendo que suena.
@@ -251,6 +288,14 @@ final class AudioPlayer {
                     self.playWhenSeekCompletes = false
                     self.isPlaying = false
                     self.updateNowPlaying()
+                    return
+                }
+                guard self.pendingSeek != nil else {
+                    // Listo y sin salto pendiente: si estaba esperando para sonar, que suene.
+                    if self.playWhenSeekCompletes {
+                        self.playWhenSeekCompletes = false
+                        self.player.playImmediately(atRate: 1.0)
+                    }
                     return
                 }
                 self.performPendingSeek(on: item)
@@ -273,6 +318,15 @@ final class AudioPlayer {
             self.playWhenSeekCompletes = false
             self.player.playImmediately(atRate: 1.0)
         }
+    }
+
+    /// Vacía el reproductor y cancela lo que estuviera pendiente.
+    private func clearPlayerItem() {
+        statusObservation?.invalidate()
+        statusObservation = nil
+        pendingSeek = nil
+        playWhenSeekCompletes = false
+        player.replaceCurrentItem(with: nil)
     }
 
     /// Manda guardar dónde va la reproducción (la app lo escribe en disco).
@@ -348,6 +402,16 @@ final class AudioPlayer {
         // Algunos AirPods/mandos mandan next/previous: los tratamos como ±30 s.
         center.nextTrackCommand.addTarget { [weak self] _ in self?.skip(by: 30); return .success }
         center.previousTrackCommand.addTarget { [weak self] _ in self?.skip(by: -30); return .success }
+        // Arrastrar la barra desde la pantalla de bloqueo, el centro de control o el coche. iOS
+        // pintaba la barra igualmente (porque se publican tiempo y duración), pero al arrastrarla
+        // volvía sola a su sitio: no había nadie atendiendo la orden.
+        center.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self, let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            self.seek(to: event.positionTime)
+            return .success
+        }
     }
 
     /// Decide qué imagen toca mostrar ahora (la de la sección en curso, o si no, la del episodio)
