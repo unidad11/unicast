@@ -68,7 +68,14 @@ struct UnicastApp: App {
                 .environment(colorExtractor)
                 .preferredColorScheme(.light) // Unicast es clara por diseño (rediseño 2026)
                 .onChange(of: scenePhase) { _, phase in
+                    downloadManager.appIsActive = (phase == .active)
                     if phase == .active {
+                        // Lo que iOS tenga aparcado se relanza ya, y lo que falte (descargas que
+                        // fallaron, audio que desapareció) se vuelve a pedir, aunque no haya
+                        // episodios nuevos ni toque refrescar.
+                        downloadManager.promoteDeferredDownloads {
+                            store.retryMissingDownloads(using: downloadManager)
+                        }
                         // Al volver a la app: refresco automático (si el último tiene >5 min).
                         // @MainActor: evita que este refresco se cruce con un "seguir podcast" a la vez.
                         Task { @MainActor in

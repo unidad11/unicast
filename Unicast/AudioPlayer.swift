@@ -13,6 +13,9 @@ final class AudioPlayer {
     private(set) var isPlaying = false
     private(set) var currentTime: TimeInterval = 0
     private(set) var duration: TimeInterval = 0
+    /// ¿Lo que suena sale de internet en vez del archivo descargado? Se enseña en el reproductor
+    /// para que se pueda comprobar de un vistazo, sin tener que fiarse de la impresión.
+    private(set) var isStreaming = false
 
     @ObservationIgnored private let player = AVPlayer()
     @ObservationIgnored private var timeObserver: Any?
@@ -87,6 +90,7 @@ final class AudioPlayer {
         // Si está descargado, reproduce el archivo local; si no, hace streaming.
         let isLocal = DownloadManager.isDownloaded(episode.id)
         let source = isLocal ? DownloadManager.localURL(for: episode.id) : episode.audioURL
+        isStreaming = !isLocal && source != nil
         if let url = source {
             let item = Self.makeItem(url: url, isLocal: isLocal)
             player.replaceCurrentItem(with: item)
@@ -128,7 +132,7 @@ final class AudioPlayer {
     /// Reproduce un episodio (desde donde se quedó).
     func play(_ episode: Episode) {
         try? AVAudioSession.sharedInstance().setActive(true)
-        if currentEpisode?.id != episode.id { prepare(episode) }
+        if currentEpisode?.id != episode.id { prepare(episode) } else { switchToLocalFileIfAvailable() }
         // Si aún falta colocar el episodio donde se dejó, espera a ese salto para sonar: si no,
         // se oiría un instante del principio y después el brinco.
         if pendingSeek != nil {
@@ -141,6 +145,7 @@ final class AudioPlayer {
     }
 
     func togglePlayPause() {
+        if !isPlaying { switchToLocalFileIfAvailable() }
         isPlaying.toggle()
         if isPlaying {
             // Recién abierta la app, el episodio puede estar aún colocándose: sonar ya haría
@@ -173,6 +178,17 @@ final class AudioPlayer {
     }
 
     // MARK: - Privado
+
+    /// El origen del audio (archivo o internet) se decidía UNA vez, al preparar el episodio, y
+    /// no se volvía a mirar. Caso real: al abrir la app se prepara el último episodio mientras
+    /// su descarga aún está en marcha → queda preparado por streaming. La descarga termina, la
+    /// lista ya muestra la marca verde... y al darle al play seguía sonando desde internet.
+    /// Ahora, al reanudar, si el archivo ya está en el móvil se cambia a él en el mismo punto.
+    private func switchToLocalFileIfAvailable() {
+        guard isStreaming, var episode = currentEpisode, DownloadManager.isDownloaded(episode.id) else { return }
+        episode.playbackPosition = currentTime
+        prepare(episode)
+    }
 
     /// Crea el elemento de audio. Con el archivo descargado se pide TIEMPO PRECISO
     /// (`AVURLAssetPreferPreciseDurationAndTimingKey`), y esa es la causa de fondo de que al

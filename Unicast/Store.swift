@@ -306,9 +306,28 @@ final class AppStore {
         for ep in keep where !ep.isDownloaded && !ep.isPlayed && !DownloadManager.isDownloaded(ep.id) {
             downloads.download(ep) { [weak self] in self?.markDownloaded(ep.id, in: podcastID) }
         }
-        // Rotación: borrar los descargados que ya no entran (sin empezar a escuchar).
-        for ep in podcast.episodes where ep.isDownloaded && !keepIDs.contains(ep.id) && ep.playbackPosition == 0 {
+        // Rotación: borrar los descargados que ya no entran (sin empezar a escuchar). Nunca el que
+        // está cargado en el reproductor: en sus primeros 30 s aún figura en 0:00 y se le podía
+        // borrar el archivo mientras sonaba.
+        for ep in podcast.episodes where ep.isDownloaded && !keepIDs.contains(ep.id) && ep.playbackPosition == 0
+            && ep.id != nowPlaying?.id {
             removeFromDownloads(ep.id, in: podcastID)
+        }
+    }
+
+    /// Reintenta TODAS las descargas que falten, de todos los podcasts, haya o no episodios nuevos.
+    ///
+    /// Agujero que tapa: `applyAutoDownload` solo se llamaba para los podcasts cuyo feed había
+    /// CAMBIADO en el refresco. Con el refresco condicional (ETag), un feed sin novedades responde
+    /// "sin cambios" y ese podcast ni se miraba. Así que si la descarga del último episodio fallaba
+    /// una vez (sin cobertura, servidor caído, timeout de 48 h...), no se volvía a intentar hasta
+    /// que el podcast publicara OTRO episodio — días, a veces una semana — y mientras tanto ese
+    /// episodio solo se podía escuchar por streaming. Lo mismo con los que `reconcileDownloads`
+    /// descubría sin audio y no estaban empezados.
+    /// Es barato: por episodio solo mira si el archivo existe; lo ya descargado o en curso no se toca.
+    func retryMissingDownloads(using downloads: DownloadManager) {
+        for podcast in podcasts where podcast.autoDownload {
+            applyAutoDownload(for: podcast.id, using: downloads)
         }
     }
 
@@ -437,6 +456,7 @@ final class AppStore {
                 }
             }
         }
+        retryMissingDownloads(using: downloads)
         // La próxima vez se empieza justo donde se quedó esta — si iOS cortó la tarea a mitad,
         // los que no llegaron a lanzarse son los primeros candidatos del siguiente refresco.
         UserDefaults.standard.set((start + launched) % all.count, forKey: Self.rotationKey)

@@ -34,7 +34,20 @@ final class DownloadManager: NSObject {
         let id: UUID
         let title: String
         let podcastTitle: String
+        /// ¿Se lanzó con la app en segundo plano? Opcional para poder leer las fichas de las
+        /// tareas creadas por versiones anteriores (esas se leen como `nil`).
+        var startedInBackground: Bool?
     }
+
+    /// Lo pone la app según esté en pantalla o no (`scenePhase`). Empieza en `false` porque iOS
+    /// puede arrancar la app directamente en segundo plano, sin llegar a mostrarla.
+    @ObservationIgnored
+    var appIsActive = false
+
+    /// Tareas que se están cancelando a propósito para relanzarlas (ver `promoteDeferredDownloads`):
+    /// su "error" de cancelación no debe quitar el episodio de "descargando".
+    @ObservationIgnored
+    private var replacedTasks: Set<Int> = []
 
     private static func encode(_ info: TaskInfo) -> String? {
         guard let data = try? JSONEncoder().encode(info) else { return nil }
@@ -181,14 +194,57 @@ final class DownloadManager: NSObject {
     func download(_ episode: Episode, completion: @escaping () -> Void) {
         guard let url = episode.audioURL, !downloading.contains(episode.id) else { return }
         downloading.insert(episode.id)
+        startTask(url: url, info: TaskInfo(id: episode.id, title: episode.title,
+                                           podcastTitle: episode.podcastTitle),
+                  completion: completion)
+    }
+
+    private func startTask(url: URL, info: TaskInfo, completion: (() -> Void)?) {
+        var info = info
+        info.startedInBackground = !appIsActive
         let task = session.downloadTask(with: url)
         // La identidad del episodio viaja DENTRO de la tarea, no solo en memoria: es lo que hace
         // que una descarga terminada de madrugada se pueda guardar en su sitio al despertar.
-        task.taskDescription = Self.encode(TaskInfo(id: episode.id,
-                                                    title: episode.title,
-                                                    podcastTitle: episode.podcastTitle))
+        task.taskDescription = Self.encode(info)
         pending[task.taskIdentifier] = completion
         task.resume()
+    }
+
+    /// Relanza "en primer plano" las descargas que iOS tiene aparcadas.
+    ///
+    /// Una descarga pedida con la app en segundo plano (refresco nocturno, Atajos...) la trata
+    /// iOS como DISCRECIONAL, lo diga o no la configuración: la empieza cuando le parece —
+    /// típicamente con WiFi y enchufado — y puede tenerla horas sin mover un byte. Si se abre la
+    /// app antes, el episodio nuevo aparece en la lista pero sin audio y, al darle al play, suena
+    /// por streaming. Al abrir la app, las que siguen sin haber recibido nada se cancelan y se
+    /// vuelven a pedir ya con la app delante, que iOS atiende de inmediato. Las que ya están
+    /// bajando no se tocan (se perdería lo descargado).
+    /// `then` se llama al acabar (en el hilo principal), cuando `downloading` ya refleja TODO lo
+    /// que iOS tiene en vuelo: así lo que se pida después no duplica una descarga en curso.
+    func promoteDeferredDownloads(then: (() -> Void)? = nil) {
+        session.getAllTasks { tasks in
+            let live = tasks.filter { $0.state == .running || $0.state == .suspended }
+                .compactMap { Self.decode($0.taskDescription)?.id }
+            let parked: [(URLSessionTask, TaskInfo, URL)] = tasks.compactMap { task in
+                guard task.state == .running || task.state == .suspended,
+                      task.countOfBytesReceived == 0,
+                      let info = Self.decode(task.taskDescription), info.startedInBackground != false,
+                      let url = task.originalRequest?.url else { return nil }
+                return (task, info, url)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                for id in live { self.downloading.insert(id) }
+                for (task, info, url) in parked {
+                    self.replacedTasks.insert(task.taskIdentifier)
+                    let completion = self.pending.removeValue(forKey: task.taskIdentifier)
+                    task.cancel()
+                    self.downloading.insert(info.id)
+                    self.startTask(url: url, info: info, completion: completion)
+                }
+                then?()
+            }
+        }
     }
 
     /// Borra el audio descargado de un episodio (al escucharlo y autoborrarlo, etc.).
@@ -237,8 +293,11 @@ extension DownloadManager: URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard error != nil else { return }
         DispatchQueue.main.async { [weak self] in
-            if let id = Self.decode(task.taskDescription)?.id { self?.downloading.remove(id) }
-            self?.pending[task.taskIdentifier] = nil
+            guard let self else { return }
+            // Cancelada a propósito para relanzarla: su sustituta ya está en marcha.
+            if self.replacedTasks.remove(task.taskIdentifier) != nil { return }
+            if let id = Self.decode(task.taskDescription)?.id { self.downloading.remove(id) }
+            self.pending[task.taskIdentifier] = nil
         }
     }
 

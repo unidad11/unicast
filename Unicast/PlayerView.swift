@@ -72,10 +72,19 @@ struct PlayerView: View {
                 Image(systemName: "chevron.down").font(.system(size: 18, weight: .semibold))
             }
             Spacer()
-            Text("REPRODUCIENDO")
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(1.5)
-                .foregroundStyle(Theme.textMuted)
+            VStack(spacing: 3) {
+                Text("REPRODUCIENDO")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.textMuted)
+                // Solo aparece si NO suena el archivo descargado: así se ve con certeza, en vez
+                // de intuirlo por lo que tarda en arrancar.
+                if audio.isStreaming {
+                    Label("Por internet (no descargado)", systemImage: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
             Spacer()
             Image(systemName: "ellipsis").font(.system(size: 18))
         }
