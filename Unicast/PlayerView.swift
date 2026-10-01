@@ -207,10 +207,12 @@ struct PlayerView: View {
         .onChange(of: audio.isPlaying) { _, _ in updatePulse() }
     }
 
-    /// Activa o detiene el latido del botón de play según si suena algo.
+    /// Da unos pocos latidos al botón de play al empezar a sonar, y se detiene solo. Antes latía
+    /// sin fin (`repeatForever`): una animación que nunca termina deja a la pantalla redibujando
+    /// sin parar, y el iPhone no llegaba a apagarla con el reproductor abierto.
     private func updatePulse() {
         if audio.isPlaying {
-            withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { pulse = true }
+            withAnimation(.easeOut(duration: 1.8).repeatCount(3, autoreverses: false)) { pulse = true }
         } else {
             pulse = false
         }
