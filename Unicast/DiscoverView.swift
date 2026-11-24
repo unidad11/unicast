@@ -5,7 +5,7 @@ import SwiftUI
 struct DiscoverView: View {
     @Environment(AppStore.self) private var store
     @Environment(DownloadManager.self) private var downloads
-    @State private var sections: [GenreSection] = []
+    @State private var sections: [RecommendationSection] = []
     @State private var isLoading = true
     @State private var followed: Set<Int> = []
     @State private var language = "ES"   // ES = español, US = inglés
@@ -53,9 +53,15 @@ struct DiscoverView: View {
                                     Text(section.genre)
                                         .font(displayFont(size: 19))
                                         .foregroundStyle(Theme.accent)
-                                        .padding(.bottom, 6)
-                                    ForEach(section.results) { result in
-                                        resultRow(result)
+                                    if !section.basedOn.isEmpty {
+                                        Text("Porque sigues: \(section.basedOn.joined(separator: ", "))")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(Theme.textSecondary)
+                                            .lineLimit(2)
+                                            .padding(.bottom, 6)
+                                    }
+                                    ForEach(section.items) { item in
+                                        resultRow(item)
                                         Divider().overlay(Theme.divider)
                                     }
                                 }
@@ -73,12 +79,16 @@ struct DiscoverView: View {
 
     private func load() async {
         isLoading = true
-        sections = await PodcastService.discover(from: store.podcasts, country: language)
+        let seguidos = store.podcasts.map {
+            FollowedPodcast(title: $0.title, summary: $0.summary, feedURL: $0.feedURL)
+        }
+        sections = await DescubrirEngine.recomendar(seguidos: seguidos, idioma: language)
         isLoading = false
     }
 
-    private func resultRow(_ result: SearchResult) -> some View {
-        HStack(spacing: 11) {
+    private func resultRow(_ item: Recommendation) -> some View {
+        let result = item.result
+        return HStack(spacing: 11) {
             AsyncImage(url: result.artwork) { image in
                 image.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
@@ -94,6 +104,11 @@ struct DiscoverView: View {
                 Text(result.artistName)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary).lineLimit(1)
+                if let rank = item.rankText {
+                    Text(rank + (item.topicText.map { " · \($0)" } ?? ""))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.accent).lineLimit(1)
+                }
             }
             Spacer()
             followButton(result)

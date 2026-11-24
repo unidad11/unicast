@@ -80,6 +80,8 @@ enum PodcastService {
 
     /// Detecta las categorías de lo que sigue el usuario y, por cada una, propone podcasts de
     /// esa categoría que aún no sigue. `country` elige la tienda (ES = español, US = inglés).
+    /// ⚠️ SUSTITUIDA el 24/11/2026 por `DescubrirEngine.recomendar` (esta solo buscaba el nombre de la categoría).
+    /// Se conserva por si hiciera falta volver atrás; ya no la llama ninguna pantalla.
     static func discover(from podcasts: [Podcast], country: String) async -> [GenreSection] {
         // Categorías de hasta 6 seguidos (con el nombre en el idioma de la tienda consultada).
         var genreCounts: [String: Int] = [:]
@@ -150,6 +152,11 @@ struct SearchResult: Decodable, Identifiable, Hashable {
     let artworkUrl100: String?
     let artworkUrl600: String?
     let primaryGenreName: String?
+    // Datos extra (opcionales; solo vienen de la búsqueda/consulta de Apple): los usa Descubrir.
+    let genreIds: [String]?
+    let genres: [String]?
+    let releaseDate: String?     // última publicación (ISO 8601)
+    let trackCount: Int?         // nº de episodios
 
     var id: Int { collectionId }
     var artwork: URL? { URL(string: artworkUrl600 ?? artworkUrl100 ?? "") }
