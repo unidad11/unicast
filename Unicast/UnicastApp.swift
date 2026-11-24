@@ -147,6 +147,10 @@ struct UnicastApp: App {
                     // no en `init()` porque el manejador del refresco corto lo registra SwiftUI al
                     // montar la escena: pedirlo antes de eso se lo puede comer el sistema.
                     BackgroundScheduling.scheduleAll()
+                    // Carátulas por adelantado, en segundo plano: así cuando se abre la biblioteca ya
+                    // están en memoria, reducidas y decodificadas, y no salen "refrescándose" una a una.
+                    let caratulas = store.podcasts.compactMap(\.artworkURL)
+                    Task(priority: .utility) { await ImageCache.shared.preload(caratulas) }
                     // Huérfanos: audio bien descargado que se quedó sin episodio porque un
                     // refresco se cortó a mitad. Los que están descargándose AHORA se excluyen
                     // (siguen en la lista aunque su fichero final aún no exista o esté a medias).

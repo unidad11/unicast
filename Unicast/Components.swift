@@ -101,7 +101,7 @@ struct MiniPlayer: View {
             HStack(spacing: 11) {
                 Group {
                     if let url = episode.artworkURL ?? store.podcasts.first(where: { $0.title == episode.podcastTitle })?.artworkURL {
-                        AsyncImage(url: url) { image in image.resizable().aspectRatio(contentMode: .fill) }
+                        CachedImage(url: url) { image in image.resizable().aspectRatio(contentMode: .fill) }
                         placeholder: { Color(hex: episode.colorHex) }
                     } else { Color(hex: episode.colorHex) }
                 }
