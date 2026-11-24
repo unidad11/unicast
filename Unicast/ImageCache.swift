@@ -23,6 +23,8 @@ final class ImageCache: @unchecked Sendable {
     private let oldFolder: URL
     private let lock = NSLock()
     private var enCurso: [URL: Task<UIImage?, Never>] = [:]
+    /// URLs de las que ya se comprobó que NO hay miniatura en disco (evita repetir la comprobación en cada dibujado).
+    private var sinMiniatura: Set<URL> = []
 
     private init() {
         let fm = FileManager.default
@@ -61,22 +63,51 @@ final class ImageCache: @unchecked Sendable {
         return carpeta.appendingPathComponent(hash)
     }
 
-    /// Solo memoria y al instante (sin esperar): para que una carátula ya cargada no pase por el cuadro de color.
+    private func miniatura(para url: URL) -> URL {
+        fichero(para: url, en: folder).appendingPathExtension("t\(Self.maxPixel)")
+    }
+
+    /// Al instante y sin esperar: primero la memoria; si no, la MINIATURA ya reducida que hay en disco
+    /// (unos pocos KB, se lee y decodifica en milisegundos). Así, aunque la app se acabe de abrir y la
+    /// memoria esté vacía, la carátula sale en el primer dibujado, sin pasar por el cuadro de color.
     func cachedImage(for url: URL) -> UIImage? {
-        memory.object(forKey: url as NSURL)
+        if let enMemoria = memory.object(forKey: url as NSURL) { return enMemoria }
+        lock.lock(); let descartada = self.sinMiniatura.contains(url); lock.unlock()
+        if descartada { return nil }
+        if let datos = try? Data(contentsOf: miniatura(para: url)), let imagen = Self.reducida(from: datos) {
+            memory.setObject(imagen, forKey: url as NSURL)
+            return imagen
+        }
+        lock.lock(); self.sinMiniatura.insert(url); lock.unlock()
+        return nil
+    }
+
+    /// Guarda la miniatura reducida para que la próxima vez salga al instante.
+    private func guardarMiniatura(_ imagen: UIImage, para url: URL) {
+        guard let datos = imagen.jpegData(compressionQuality: 0.85) else { return }
+        try? datos.write(to: miniatura(para: url))
+        lock.lock(); sinMiniatura.remove(url); lock.unlock()
     }
 
     /// Da la imagen reducida para esa URL: de memoria, de disco, o la descarga y la guarda para la próxima vez.
     func image(for url: URL) async -> UIImage? {
         if let cached = cachedImage(for: url) { return cached }
-        lock.lock()
-        if let tarea = enCurso[url] { lock.unlock(); return await tarea.value }
+        let resultado = await tareaDeCarga(para: url).value
+        terminarCarga(de: url)
+        return resultado
+    }
+
+    /// Una sola carga por URL a la vez: si ya hay una en marcha, se espera a esa misma.
+    private func tareaDeCarga(para url: URL) -> Task<UIImage?, Never> {
+        lock.lock(); defer { lock.unlock() }
+        if let existente = enCurso[url] { return existente }
         let tarea = Task.detached(priority: .userInitiated) { [self] in await cargar(url) }
         enCurso[url] = tarea
-        lock.unlock()
-        let resultado = await tarea.value
+        return tarea
+    }
+
+    private func terminarCarga(de url: URL) {
         lock.lock(); enCurso[url] = nil; lock.unlock()
-        return resultado
     }
 
     private func cargar(_ url: URL) async -> UIImage? {
@@ -87,6 +118,7 @@ final class ImageCache: @unchecked Sendable {
                 memory.setObject(imagen, forKey: url as NSURL)
                 // Si estaba en la carpeta antigua (Caches), se pasa a la nueva para que iOS no la vacíe.
                 if ruta == viejo, !FileManager.default.fileExists(atPath: nuevo.path) { try? data.write(to: nuevo) }
+                guardarMiniatura(imagen, para: url)
                 return imagen
             }
         }
@@ -94,6 +126,7 @@ final class ImageCache: @unchecked Sendable {
               let imagen = Self.reducida(from: data) else { return nil }
         memory.setObject(imagen, forKey: url as NSURL)
         try? data.write(to: nuevo)
+        guardarMiniatura(imagen, para: url)
         return imagen
     }
 
